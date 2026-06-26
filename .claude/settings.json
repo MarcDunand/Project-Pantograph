@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/Owner/AppData/Roaming/Python/Python311/site-packages/pyaxidraw/**)",
+      "Bash(python -c \"import axidrawinternal; import os; print\\(os.path.dirname\\(axidrawinternal.__file__\\)\\)\")",
+      "Bash(python -c \"import sys; [print\\(p\\) for p in sys.path if 'axidraw' in p.lower\\(\\)]\")",
+      "Read(//c/Users/Owner/AppData/Roaming/Python/Python311/site-packages/axidrawinternal/**)",
+      "WebFetch(domain:axidraw.com)"
+    ]
+  }
+}

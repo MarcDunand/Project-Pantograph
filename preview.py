@@ -296,6 +296,40 @@ HTML = """<!DOCTYPE html>
       <span class="settings-section">Plotting</span>
       <label>flip H</label>     <input type="checkbox" id="inp-flipx">
       <label>flip V</label>     <input type="checkbox" id="inp-flipy">
+      <label>x tilt °</label>   <input type="number" id="inp-x-tilt" min="-10" max="10" step="0.1" value="0">
+      <label>y tilt °</label>   <input type="number" id="inp-y-tilt" min="-10" max="10" step="0.1" value="0">
+      <hr class="settings-divider">
+      <span class="settings-section" style="padding-left:10px">pen</span>
+      <div class="settings-full">
+        <div style="display:flex;justify-content:space-between;color:#555;font-size:9px;margin:2px 0">
+          <span>pen up</span><span id="pen-up-val">60</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px">
+          <input type="range" id="inp-pen-up" class="opt-slider" min="0" max="100" step="1" value="60" style="flex:1">
+          <button class="settings-btn" style="margin:0;padding:2px 5px;font-size:8px;white-space:nowrap" onclick="testPenUp()">test</button>
+        </div>
+      </div>
+      <div class="settings-full">
+        <div style="display:flex;justify-content:space-between;color:#555;font-size:9px;margin:2px 0">
+          <span>min pen down</span><span id="pen-down-min-val">40</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px">
+          <input type="range" id="inp-pen-down-min" class="opt-slider" min="0" max="100" step="1" value="40" style="flex:1">
+          <button class="settings-btn" style="margin:0;padding:2px 5px;font-size:8px;white-space:nowrap" onclick="testPenDownMin()">test</button>
+        </div>
+      </div>
+      <label>variable pressure</label> <input type="checkbox" id="inp-var-pressure">
+      <label id="pressure-rate-label">update rate %</label>
+      <input type="number" id="inp-pressure-rate" min="0" max="100" step="1" value="100">
+      <div class="settings-full" id="pen-down-max-block">
+        <div style="display:flex;justify-content:space-between;color:#555;font-size:9px;margin:2px 0">
+          <span>max pen down</span><span id="pen-down-max-val">20</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px">
+          <input type="range" id="inp-pen-down-max" class="opt-slider" min="0" max="100" step="1" value="20" style="flex:1">
+          <button class="settings-btn" style="margin:0;padding:2px 5px;font-size:8px;white-space:nowrap" onclick="testPenDownMax()">test</button>
+        </div>
+      </div>
       <hr class="settings-divider">
       <span class="settings-section">Path Optimization</span>
       <label>enable</label>     <input type="checkbox" id="inp-opt-en" checked>
@@ -392,6 +426,17 @@ let lagThreshold = 3.0;
 let limitLag     = true;
 let minDist      = 0.01;
 
+// Pen position settings (0-100, direct AxiDraw servo %; lower = pen further down)
+let varPressure        = false;
+let penPosUp           = 60;
+let penDownMin         = 40;
+let penDownMax         = 20;
+let pressureUpdateRate = 100;
+
+// Canvas tilt compensation (degrees)
+let xTiltDeg = 0.0;
+let yTiltDeg = 0.0;
+
 const dot         = document.getElementById('dot');
 const connLabel   = document.getElementById('conn-label');
 const ptCountEl   = document.getElementById('pt-count');
@@ -409,6 +454,13 @@ const inpOptScale = document.getElementById('inp-opt-scale');
 const inpLimitLag     = document.getElementById('inp-maxlag-en');
 const inpLagThreshold = document.getElementById('inp-maxlag-sec');
 const inpMinDist      = document.getElementById('inp-min-dist');
+const inpVarPressure      = document.getElementById('inp-var-pressure');
+const inpPressureRate     = document.getElementById('inp-pressure-rate');
+const inpPenUp            = document.getElementById('inp-pen-up');
+const inpPenDownMin       = document.getElementById('inp-pen-down-min');
+const inpPenDownMax       = document.getElementById('inp-pen-down-max');
+const inpXTilt            = document.getElementById('inp-x-tilt');
+const inpYTilt            = document.getElementById('inp-y-tilt');
 
 // ── coordinate system ─────────────────────────────────────────────────────────
 
@@ -560,6 +612,8 @@ const _STORAGE_KEYS = [
   'axi_originX','axi_originY',
   'axi_flipX','axi_flipY',
   'axi_optEnabled','axi_optScale','axi_lagThreshold','axi_limitLag','axi_minDist',
+  'axi_varPressure','axi_penPosUp','axi_penDownMin','axi_penDownMax','axi_pressureUpdateRate',
+  'axi_xTilt','axi_yTilt',
 ];
 
 function saveSettings() {
@@ -581,6 +635,13 @@ function saveSettings() {
   localStorage.setItem('axi_lagThreshold', lagThreshold);
   localStorage.setItem('axi_limitLag',     limitLag ? '1' : '0');
   localStorage.setItem('axi_minDist',      minDist);
+  localStorage.setItem('axi_varPressure',        varPressure ? '1' : '0');
+  localStorage.setItem('axi_penPosUp',           penPosUp);
+  localStorage.setItem('axi_penDownMin',         penDownMin);
+  localStorage.setItem('axi_penDownMax',         penDownMax);
+  localStorage.setItem('axi_pressureUpdateRate', pressureUpdateRate);
+  localStorage.setItem('axi_xTilt',             xTiltDeg);
+  localStorage.setItem('axi_yTilt',             yTiltDeg);
 }
 
 function loadSettings() {
@@ -613,6 +674,20 @@ function loadSettings() {
     inpMinDist.value = minDist;
     document.getElementById('opt-mindist-val').textContent = (minDist * 25.4).toFixed(2) + 'mm';
   }
+  const vp = localStorage.getItem('axi_varPressure');
+  const pu = localStorage.getItem('axi_penPosUp');
+  const pd = localStorage.getItem('axi_penDownMin');
+  const pm = localStorage.getItem('axi_penDownMax');
+  const pr = localStorage.getItem('axi_pressureUpdateRate');
+  if (vp !== null) { varPressure = vp === '1'; inpVarPressure.checked = varPressure; }
+  if (pu !== null) { penPosUp   = parseInt(pu) || 60;  inpPenUp.value          = penPosUp;           document.getElementById('pen-up-val').textContent       = penPosUp; }
+  if (pd !== null) { penDownMin = parseInt(pd) || 40;  inpPenDownMin.value     = penDownMin;          document.getElementById('pen-down-min-val').textContent = penDownMin; }
+  if (pm !== null) { penDownMax = parseInt(pm) || 20;  inpPenDownMax.value     = penDownMax;          document.getElementById('pen-down-max-val').textContent = penDownMax; }
+  if (pr !== null) { pressureUpdateRate = parseInt(pr) ?? 100; inpPressureRate.value = pressureUpdateRate; }
+  const xt = localStorage.getItem('axi_xTilt');
+  const yt = localStorage.getItem('axi_yTilt');
+  if (xt !== null) { xTiltDeg = parseFloat(xt) || 0.0; inpXTilt.value = xTiltDeg; }
+  if (yt !== null) { yTiltDeg = parseFloat(yt) || 0.0; inpYTilt.value = yTiltDeg; }
 }
 
 function resetSettings() {
@@ -628,18 +703,35 @@ function resetSettings() {
   minDist      = 0.01;  inpMinDist.value         = 0.01;
   document.getElementById('opt-scale-val').textContent  = '50%';
   document.getElementById('opt-mindist-val').textContent = '0.25mm';
+  varPressure        = false; inpVarPressure.checked = false;
+  penPosUp           = 60;   inpPenUp.value          = 60;
+  penDownMin         = 40;   inpPenDownMin.value      = 40;
+  penDownMax         = 20;   inpPenDownMax.value      = 20;
+  pressureUpdateRate = 100;  inpPressureRate.value    = 100;
+  document.getElementById('pen-up-val').textContent       = 60;
+  document.getElementById('pen-down-min-val').textContent = 40;
+  document.getElementById('pen-down-max-val').textContent = 20;
+  xTiltDeg = 0.0; inpXTilt.value = 0;
+  yTiltDeg = 0.0; inpYTilt.value = 0;
   applyPreviewSize();
   inpOX.value = 0; inpOY.value = 0;
   _STORAGE_KEYS.forEach(k => localStorage.removeItem(k));
   updateOptUI();
+  updatePenUI();
   if (_ws && _ws.readyState === WebSocket.OPEN) {
-    _ws.send(JSON.stringify({ type: 'set_flip_x',        enabled: false }));
-    _ws.send(JSON.stringify({ type: 'set_flip_y',        enabled: false }));
-    _ws.send(JSON.stringify({ type: 'set_opt_enabled',   enabled: true  }));
-    _ws.send(JSON.stringify({ type: 'set_opt_scale',     value:   0.5   }));
-    _ws.send(JSON.stringify({ type: 'set_lag_threshold', value:   3.0   }));
-    _ws.send(JSON.stringify({ type: 'set_limit_lag',     enabled: true  }));
-    _ws.send(JSON.stringify({ type: 'set_min_dist',      value:   0.01  }));
+    _ws.send(JSON.stringify({ type: 'set_flip_x',             enabled: false }));
+    _ws.send(JSON.stringify({ type: 'set_flip_y',             enabled: false }));
+    _ws.send(JSON.stringify({ type: 'set_opt_enabled',        enabled: true  }));
+    _ws.send(JSON.stringify({ type: 'set_opt_scale',          value:   0.5   }));
+    _ws.send(JSON.stringify({ type: 'set_lag_threshold',      value:   3.0   }));
+    _ws.send(JSON.stringify({ type: 'set_limit_lag',          enabled: true  }));
+    _ws.send(JSON.stringify({ type: 'set_min_dist',           value:   0.01  }));
+    _ws.send(JSON.stringify({ type: 'set_variable_pressure',  enabled: false }));
+    _ws.send(JSON.stringify({ type: 'set_pen_up_pos',         value:   60    }));
+    _ws.send(JSON.stringify({ type: 'set_pen_down_min',       value:   40    }));
+    _ws.send(JSON.stringify({ type: 'set_pen_down_max',       value:   20    }));
+    _ws.send(JSON.stringify({ type: 'set_x_tilt',             value:   0.0   }));
+    _ws.send(JSON.stringify({ type: 'set_y_tilt',             value:   0.0   }));
   }
 }
 
@@ -655,6 +747,28 @@ function updateOptUI() {
   if (inpLimitLag)    inpLimitLag.style.opacity      = opacity;
   const minDistBlock = document.getElementById('opt-mindist-block');
   if (minDistBlock)   minDistBlock.style.opacity      = opacity;
+}
+
+function updatePenUI() {
+  const opacity = varPressure ? '1' : '0.35';
+  const maxBlock    = document.getElementById('pen-down-max-block');
+  const rateLabel   = document.getElementById('pressure-rate-label');
+  if (maxBlock)  maxBlock.style.opacity  = opacity;
+  if (rateLabel) rateLabel.style.opacity = opacity;
+  if (inpPressureRate) inpPressureRate.style.opacity = opacity;
+}
+
+function testPenUp() {
+  if (_ws && _ws.readyState === WebSocket.OPEN)
+    _ws.send(JSON.stringify({ type: 'pen_test_up' }));
+}
+function testPenDownMin() {
+  if (_ws && _ws.readyState === WebSocket.OPEN)
+    _ws.send(JSON.stringify({ type: 'pen_test_min' }));
+}
+function testPenDownMax() {
+  if (_ws && _ws.readyState === WebSocket.OPEN)
+    _ws.send(JSON.stringify({ type: 'pen_test_max' }));
 }
 
 function requestHome() {
@@ -681,6 +795,7 @@ applyPreviewSize();
 inpOX.value = originX; inpOY.value = originY;
 document.getElementById('opt-scale-val').textContent = Math.round(optScale * 100) + '%';
 updateOptUI();
+updatePenUI();
 
 // ── OSC message handler ───────────────────────────────────────────────────────
 
@@ -817,6 +932,53 @@ inpMinDist.addEventListener('input', e => {
     _ws.send(JSON.stringify({ type: 'set_min_dist', value: minDist }));
   saveSettings();
 });
+inpVarPressure.addEventListener('change', e => {
+  varPressure = e.target.checked;
+  if (_ws && _ws.readyState === WebSocket.OPEN)
+    _ws.send(JSON.stringify({ type: 'set_variable_pressure', enabled: varPressure }));
+  updatePenUI();
+  saveSettings();
+});
+inpPenUp.addEventListener('input', e => {
+  penPosUp = parseInt(e.target.value);
+  document.getElementById('pen-up-val').textContent = penPosUp;
+  if (_ws && _ws.readyState === WebSocket.OPEN)
+    _ws.send(JSON.stringify({ type: 'set_pen_up_pos', value: penPosUp }));
+  saveSettings();
+});
+inpPenDownMin.addEventListener('input', e => {
+  penDownMin = parseInt(e.target.value);
+  document.getElementById('pen-down-min-val').textContent = penDownMin;
+  if (_ws && _ws.readyState === WebSocket.OPEN)
+    _ws.send(JSON.stringify({ type: 'set_pen_down_min', value: penDownMin }));
+  saveSettings();
+});
+inpPenDownMax.addEventListener('input', e => {
+  penDownMax = parseInt(e.target.value);
+  document.getElementById('pen-down-max-val').textContent = penDownMax;
+  if (_ws && _ws.readyState === WebSocket.OPEN)
+    _ws.send(JSON.stringify({ type: 'set_pen_down_max', value: penDownMax }));
+  saveSettings();
+});
+inpPressureRate.addEventListener('change', e => {
+  pressureUpdateRate = Math.max(0, Math.min(100, parseInt(e.target.value) || 0));
+  inpPressureRate.value = pressureUpdateRate;
+  if (_ws && _ws.readyState === WebSocket.OPEN)
+    _ws.send(JSON.stringify({ type: 'set_pressure_update_rate', value: pressureUpdateRate }));
+  saveSettings();
+});
+inpXTilt.addEventListener('change', e => {
+  xTiltDeg = parseFloat(e.target.value) || 0.0;
+  if (_ws && _ws.readyState === WebSocket.OPEN)
+    _ws.send(JSON.stringify({ type: 'set_x_tilt', value: xTiltDeg }));
+  saveSettings();
+});
+inpYTilt.addEventListener('change', e => {
+  yTiltDeg = parseFloat(e.target.value) || 0.0;
+  if (_ws && _ws.readyState === WebSocket.OPEN)
+    _ws.send(JSON.stringify({ type: 'set_y_tilt', value: yTiltDeg }));
+  saveSettings();
+});
 
 let _ws = null;
 
@@ -831,7 +993,14 @@ function connect() {
     _ws.send(JSON.stringify({ type: 'set_opt_scale',       value:   optScale   }));
     _ws.send(JSON.stringify({ type: 'set_lag_threshold', value:   lagThreshold }));
     _ws.send(JSON.stringify({ type: 'set_limit_lag',     enabled: limitLag     }));
-    _ws.send(JSON.stringify({ type: 'set_min_dist',      value:   minDist      }));
+    _ws.send(JSON.stringify({ type: 'set_min_dist',           value:   minDist      }));
+    _ws.send(JSON.stringify({ type: 'set_variable_pressure',    enabled: varPressure        }));
+    _ws.send(JSON.stringify({ type: 'set_pen_up_pos',           value:   penPosUp           }));
+    _ws.send(JSON.stringify({ type: 'set_pen_down_min',         value:   penDownMin         }));
+    _ws.send(JSON.stringify({ type: 'set_pen_down_max',         value:   penDownMax         }));
+    _ws.send(JSON.stringify({ type: 'set_pressure_update_rate', value:   pressureUpdateRate }));
+    _ws.send(JSON.stringify({ type: 'set_x_tilt',               value:   xTiltDeg          }));
+    _ws.send(JSON.stringify({ type: 'set_y_tilt',               value:   yTiltDeg          }));
   };
   _ws.onmessage = (e) => { try { handleMessage(JSON.parse(e.data)); } catch(err) { console.error(err); } };
   _ws.onclose   = () => { dot.classList.remove('live'); connLabel.textContent = 'reconnecting…'; setTimeout(connect, 1500); };
@@ -844,6 +1013,9 @@ window.downloadPNG        = downloadPNG;
 window.downloadSVG        = downloadSVG;
 window.requestHome        = requestHome;
 window.resetSettings      = resetSettings;
+window.testPenUp          = testPenUp;
+window.testPenDownMin     = testPenDownMin;
+window.testPenDownMax     = testPenDownMax;
 
 connect();
 </script>

@@ -42,6 +42,10 @@ import preview
 
 OSC_PORT = 8800
 
+# Maximum pressure value reported by iDraw OSC (Apple Pencil at full press).
+# Finger input always reports 1.0. Divide raw values by this to get a 0–1 scale.
+OSC_PRESSURE_MAX = 4.166666507720947
+
 # Physical plotting area on paper, in inches.
 # The AxiDraw will never move outside this rectangle.
 # Change these when you switch paper sizes or want a smaller plot area.
@@ -59,6 +63,11 @@ PEN_UP_TIMEOUT_SEC = 0.15
 # 0.01" (≈ 0.25mm) is a good starting point — increase if the plotter queue grows
 # too fast during fast drawing, decrease for more accuracy on slow careful lines.
 STREAM_MIN_DIST_IN = 0.01
+
+# Raw pressure value that iDraw OSC sends as a placeholder/default (normalises to ≈ 0.24).
+# Isolated occurrences are replaced by linear interpolation between neighbours;
+# a stroke where every point has this value is discarded entirely.
+SPURIOUS_RAW_PRESSURE: float = 1.0
 
 # ──────────────────────────────────────────────────────────────────────────────
 # COORDINATE MAPPING
@@ -143,6 +152,10 @@ _ad               = None   # live AxiDraw handle; used by shutdown cleanup
 _last_plot_pt:    tuple | None = None
 _stroke_had_moves: bool        = False
 
+_pending_024:               list  = []     # stroke commands buffered while pressure is spurious
+_stroke_has_good_pressure:  bool  = False  # True once a non-spurious point is seen this stroke
+_stroke_last_good_pressure: float = 0.0   # last non-spurious normalised pressure
+
 # ──────────────────────────────────────────────────────────────────────────────
 # ADAPTIVE OPTIMIZATION STATE
 # ──────────────────────────────────────────────────────────────────────────────
@@ -160,6 +173,35 @@ _lag_threshold_sec: float = 3.0
 _limit_lag:         bool  = True
 _current_lag_sec:   float = 0.0
 _min_dist_in:       float = STREAM_MIN_DIST_IN
+
+# Pen position settings (0-100, direct AxiDraw servo %; lower = pen further down)
+_variable_pressure:      bool  = False
+_pen_pos_up:             int   = 60
+_pen_down_min:           int   = 40   # position used when variable pressure is off, or at ~0 pressure
+_pen_down_max:           int   = 20   # position used at full (1.0) pressure when variable pressure is on
+_pressure_update_rate:   int   = 100  # % of lineto points that trigger a mid-stroke pen position update
+
+# Canvas tilt compensation (degrees).  Positive x_tilt means the top of the canvas
+# (small px in AxiDraw landscape space) is physically higher — the pen needs less
+# travel there, so pen_pos_down is nudged upward.  y_tilt does the same along the
+# other axis.  The servo-unit correction is computed from the physical tilt angle,
+# the distance from the paper centre, and TILT_SERVO_PER_INCH.
+_x_tilt_deg: float = 0.0
+_y_tilt_deg: float = 0.0
+TILT_SERVO_PER_INCH = 100.0   # approx: 1" of height change → 100 servo-unit offset
+
+
+def _tilt_pen_offset(px: float, py: float) -> float:
+    """
+    Servo-unit offset added to pen_pos_down at paper position (px, py) inches.
+    Positive = surface is closer to pen here, so pen_pos_down needs to increase.
+    px runs 0→PAPER_HEIGHT_IN (landscape X), py runs 0→PAPER_WIDTH_IN (landscape Y).
+    """
+    if _x_tilt_deg == 0.0 and _y_tilt_deg == 0.0:
+        return 0.0
+    offset_x = math.tan(math.radians(_x_tilt_deg)) * (PAPER_HEIGHT_IN / 2.0 - px)
+    offset_y = math.tan(math.radians(_y_tilt_deg)) * (PAPER_WIDTH_IN  / 2.0 - py)
+    return (offset_x + offset_y) * TILT_SERVO_PER_INCH
 
 
 def _compute_effective_scale(lag: float) -> float:
@@ -211,8 +253,13 @@ def _plotter_thread():
         ad.options.accel = 90
         ad.options.pen_rate_lower = 90
         ad.options.pen_rate_raise = 90
+        ad.options.pen_delay_down = -100
+        ad.options.pen_delay_up = -100
         try:
             ad.connect()
+            ad.options.pen_pos_up   = _pen_pos_up
+            ad.options.pen_pos_down = _pen_down_min
+            ad.update()          # push pen positions to EBB via servo_init
             ad.penup()           # ensure known pen state on startup
             print("[axidraw] connected")
             _ad = ad
@@ -223,6 +270,10 @@ def _plotter_thread():
     else:
         ad = None
         print("[axidraw] DRY RUN mode — no USB connection")
+
+    # Per-stroke state for mid-stroke pressure updates (local to this thread)
+    _lineto_counter      = 0
+    _last_applied_down   = None   # last pen_pos_down sent to EBB this stroke
 
     while True:
         cmd = None
@@ -243,6 +294,8 @@ def _plotter_thread():
             if not _show_raw_osc:
                 print(f"[axidraw] travel → ({x:.3f}\", {y:.3f}\")")
             if ad:
+                ad.options.pen_pos_up = _pen_pos_up
+                ad.update()
                 ad.penup()
                 ad.moveto(x, y)
             elif not _show_raw_osc:
@@ -250,13 +303,46 @@ def _plotter_thread():
                 print(f"  moveto  ({x:.3f}\", {y:.3f}\")")
 
         elif kind == "pendown":
+            pressure = cmd[2] if len(cmd) > 2 else 1.0
+            px_cmd   = cmd[3] if len(cmd) > 3 else 0.0
+            py_cmd   = cmd[4] if len(cmd) > 4 else 0.0
+            if _variable_pressure:
+                target = _pen_down_min + (_pen_down_max - _pen_down_min) * pressure
+            else:
+                target = float(_pen_down_min)
+            target += _tilt_pen_offset(px_cmd, py_cmd)
+            target_pos = max(0, min(100, round(target)))
             if ad:
+                ad.options.pen_pos_down = target_pos
+                ad.update()
                 ad.pendown()
             elif not _show_raw_osc:
-                print(f"  pendown")
+                print(f"  pendown  (pos={target_pos})")
+            _lineto_counter    = 0
+            _last_applied_down = target_pos
 
         elif kind == "lineto":
             x, y = cmd[2], cmd[3]
+            pressure = cmd[4] if len(cmd) > 4 else 1.0
+
+            if (_variable_pressure or _x_tilt_deg != 0.0 or _y_tilt_deg != 0.0) and _pressure_update_rate > 0:
+                interval = max(1, round(100 / _pressure_update_rate))
+                _lineto_counter += 1
+                if _lineto_counter % interval == 0:
+                    if _variable_pressure:
+                        target = _pen_down_min + (_pen_down_max - _pen_down_min) * pressure
+                    else:
+                        target = float(_pen_down_min)
+                    target += _tilt_pen_offset(x, y)
+                    new_pos = max(0, min(100, round(target)))
+                    if new_pos != _last_applied_down:
+                        _last_applied_down = new_pos
+                        if ad:
+                            ad.options.pen_pos_down = new_pos
+                            ad.update()
+                        elif not _show_raw_osc:
+                            print(f"  [pressure/tilt] pos={new_pos}")
+
             if ad:
                 ad.lineto(x, y)
             elif not _show_raw_osc:
@@ -272,6 +358,8 @@ def _plotter_thread():
             if not _show_raw_osc:
                 print(f"[axidraw] pen up")
             if ad:
+                ad.options.pen_pos_up = _pen_pos_up
+                ad.update()
                 ad.penup()
             elif not _show_raw_osc:
                 print(f"  penup")
@@ -280,11 +368,43 @@ def _plotter_thread():
             if not _show_raw_osc:
                 print(f"[axidraw] homing → (0.000\", 0.000\")")
             if ad:
+                ad.options.pen_pos_up = _pen_pos_up
+                ad.update()
                 ad.penup()
                 ad.moveto(0, 0)
             elif not _show_raw_osc:
                 print(f"  penup")
                 print(f"  moveto  (0.000\", 0.000\")")
+
+        elif kind == "pen_test_up":
+            if not _show_raw_osc:
+                print(f"[axidraw] pen test → up (pos={_pen_pos_up})")
+            if ad:
+                ad.options.pen_pos_up = _pen_pos_up
+                ad.update()   # servo_init re-sends SC commands; moves pen if pos changed
+                ad.penup()
+            elif not _show_raw_osc:
+                print(f"  penup (pos={_pen_pos_up})")
+
+        elif kind == "pen_test_min":
+            if not _show_raw_osc:
+                print(f"[axidraw] pen test → min down (pos={_pen_down_min})")
+            if ad:
+                ad.options.pen_pos_down = _pen_down_min
+                ad.update()
+                ad.pendown()
+            elif not _show_raw_osc:
+                print(f"  pendown (pos={_pen_down_min})")
+
+        elif kind == "pen_test_max":
+            if not _show_raw_osc:
+                print(f"[axidraw] pen test → max down (pos={_pen_down_max})")
+            if ad:
+                ad.options.pen_pos_down = _pen_down_max
+                ad.update()
+                ad.pendown()
+            elif not _show_raw_osc:
+                print(f"  pendown (pos={_pen_down_max})")
 
 
 def _run_rdp_on_deque(epsilon: float) -> int:
@@ -430,6 +550,24 @@ def _maybe_pen_up():
         return
     if state["_pen_is_down"] and (time.time() - last) > PEN_UP_TIMEOUT_SEC:
         state["_pen_is_down"] = False
+
+        if _pending_024:
+            if not _stroke_has_good_pressure:
+                # Every point in the stroke had spurious pressure — discard it entirely.
+                # moveto was already queued (plotter travels pen-up to that spot), but
+                # pendown was never sent, so no ink is deposited.
+                n = len(_pending_024)
+                print(
+                    f"[pressure] ERROR: stroke discarded — all {n} point(s) had"
+                    f" spurious pressure (raw=1.0, norm≈0.24)"
+                )
+                _pending_024.clear()
+                _last_plot_pt     = None
+                _stroke_had_moves = False
+                return
+            # Trailing spurious points — interpolate pressure down to 0
+            _flush_pending_024(0.0)
+
         preview.broadcast({"type": "pen_up"})
         t = time.monotonic()
         with _plot_lock:
@@ -453,6 +591,30 @@ def _pen_watchdog_thread():
         _maybe_pen_up()
 
 
+def _flush_pending_024(next_pressure: float) -> None:
+    """
+    Emit buffered spurious-pressure items with linearly interpolated pressures
+    (from _stroke_last_good_pressure → next_pressure), then clear the buffer.
+    Sets _stroke_had_moves for any lineto commands emitted.
+    """
+    global _stroke_had_moves
+    n = len(_pending_024)
+    if n == 0:
+        return
+    p_prev = _stroke_last_good_pressure
+    p_next = next_pressure
+    with _plot_lock:
+        for i, item in enumerate(_pending_024):
+            p_interp = p_prev + (p_next - p_prev) * (i + 1) / (n + 1)
+            kind, t, px, py = item
+            if kind == "pendown":
+                _plot_deque.append((t, "pendown", p_interp, px, py))
+            else:
+                _plot_deque.append((t, "lineto", px, py, p_interp))
+                _stroke_had_moves = True
+    _pending_024.clear()
+
+
 def _emit_point():
     """
     Fires on every /y message (the last field in each OSC burst).
@@ -463,7 +625,7 @@ def _emit_point():
          point; threshold grows with lag when optimisation is enabled.
       2. RDP on the deque backlog — handled in _optimizer_thread.
     """
-    global _last_plot_pt, _stroke_had_moves
+    global _last_plot_pt, _stroke_had_moves, _stroke_has_good_pressure, _stroke_last_good_pressure
 
     x = state["x"]
     y = state["y"]
@@ -495,13 +657,26 @@ def _emit_point():
     if preview.flip_y:
         py = PAPER_WIDTH_IN - py
 
+    # Normalize pressure to 0–1 (raw iDraw range is 0–OSC_PRESSURE_MAX)
+    pressure_norm = min(1.0, max(0.0, state["pressure"] / OSC_PRESSURE_MAX))
+    spurious = (state["pressure"] == SPURIOUS_RAW_PRESSURE)
+
     if not was_down:
-        # First point of a new stroke — travel to start position then lower pen
+        # First point of a new stroke — reset filter state, queue travel, hold pen down
         _stroke_had_moves = False
+        _stroke_has_good_pressure = False
+        _stroke_last_good_pressure = 0.0
+        _pending_024.clear()
         _last_plot_pt = (px, py)
         with _plot_lock:
             _plot_deque.append((t, "moveto", px, py))
-            _plot_deque.append((t, "pendown"))
+        if spurious:
+            _pending_024.append(("pendown", t, px, py))
+        else:
+            _stroke_has_good_pressure = True
+            _stroke_last_good_pressure = pressure_norm
+            with _plot_lock:
+                _plot_deque.append((t, "pendown", pressure_norm, px, py))
     else:
         # Continuation — apply adaptive distance filter before enqueuing
         lx, ly = _last_plot_pt
@@ -509,17 +684,25 @@ def _emit_point():
         effective_min_dist = _min_dist_in * (1.0 + eff * 4.0)
 
         if math.hypot(px - lx, py - ly) >= effective_min_dist:
-            with _plot_lock:
-                _plot_deque.append((t, "lineto", px, py))
-            _last_plot_pt = (px, py)
-            _stroke_had_moves = True
+            if spurious:
+                _pending_024.append(("lineto", t, px, py))
+                _last_plot_pt = (px, py)
+            else:
+                if _pending_024:
+                    _flush_pending_024(pressure_norm)
+                _stroke_has_good_pressure = True
+                _stroke_last_good_pressure = pressure_norm
+                with _plot_lock:
+                    _plot_deque.append((t, "lineto", px, py, pressure_norm))
+                _last_plot_pt = (px, py)
+                _stroke_had_moves = True
 
     # Send to preview
     preview.broadcast({
         "type":         "point",
         "x":            x,
         "y":            y,
-        "pressure":     state["pressure"],
+        "pressure":     pressure_norm,
         "r":            state["r"],
         "g":            state["g"],
         "b":            state["b"],
@@ -533,7 +716,7 @@ def _emit_point():
     if not _show_raw_osc:
         print(
             f"[point] ({x:.1f}, {y:.1f})  "
-            f"p={state['pressure']:.2f}  "
+            f"p={pressure_norm:.2f}  "
             f"tool={state['tool']}"
         )
 
@@ -711,7 +894,9 @@ if __name__ == "__main__":
 
     # Register callback so browser control messages reach the plotter and optimizer
     def _handle_preview_message(msg):
-        global _opt_enabled, _opt_scale, _lag_threshold_sec, _limit_lag, _min_dist_in
+        global _opt_enabled, _opt_scale, _lag_threshold_sec, _limit_lag, _min_dist_in, \
+               _variable_pressure, _pen_pos_up, _pen_down_min, _pen_down_max, _pressure_update_rate, \
+               _x_tilt_deg, _y_tilt_deg
         t = msg.get("type")
         if t == "home":
             with _plot_lock:
@@ -728,6 +913,35 @@ if __name__ == "__main__":
             _limit_lag = bool(msg.get("enabled", True))
         elif t == "set_min_dist":
             _min_dist_in = max(0.001, float(msg.get("value", STREAM_MIN_DIST_IN)))
+        elif t == "set_variable_pressure":
+            _variable_pressure = bool(msg.get("enabled", False))
+        elif t == "set_pen_up_pos":
+            _pen_pos_up = max(0, min(100, int(round(float(msg.get("value", 60))))))
+        elif t == "set_pen_down_min":
+            _pen_down_min = max(0, min(100, int(round(float(msg.get("value", 40))))))
+        elif t == "set_pen_down_max":
+            _pen_down_max = max(0, min(100, int(round(float(msg.get("value", 20))))))
+        elif t == "set_pressure_update_rate":
+            _pressure_update_rate = max(0, min(100, int(round(float(msg.get("value", 100))))))
+        elif t == "set_x_tilt":
+            _x_tilt_deg = float(msg.get("value", 0.0))
+        elif t == "set_y_tilt":
+            _y_tilt_deg = float(msg.get("value", 0.0))
+        elif t == "pen_test_up":
+            with _plot_lock:
+                _plot_deque.append((time.monotonic(), "pen_test_up"))
+            if not _show_raw_osc:
+                print("[axidraw] pen test up queued")
+        elif t == "pen_test_min":
+            with _plot_lock:
+                _plot_deque.append((time.monotonic(), "pen_test_min"))
+            if not _show_raw_osc:
+                print("[axidraw] pen test down-min queued")
+        elif t == "pen_test_max":
+            with _plot_lock:
+                _plot_deque.append((time.monotonic(), "pen_test_max"))
+            if not _show_raw_osc:
+                print("[axidraw] pen test down-max queued")
 
     preview.register_message_callback(_handle_preview_message)
 
