@@ -12,17 +12,27 @@ Then open:  http://localhost:5000
 """
 
 import asyncio
+import base64
 import json
+import os
+import re
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import websockets
 
+import postprocess
+
 # ─── configuration ────────────────────────────────────────────────────────────
 
 HTTP_PORT  = 5000        # browser page
 WS_PORT    = 5001        # WebSocket feed
+
+# Downloads from the preview are written here — an existing folder next to this
+# program — rather than the browser's Downloads folder (the browser controls
+# that and a web page can't redirect it, so the page POSTs the bytes to us).
+SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_drawings")
 
 # ─── shared broadcast set ─────────────────────────────────────────────────────
 
@@ -128,12 +138,17 @@ HTML = """<!DOCTYPE html>
     canvas { display: block; cursor: crosshair; }
     #c       { background: #000; }
 
-    #overlay {
+    /* Stacked layers over the black base: raw (grey) at the bottom, then the raw
+       in-progress overlay, the optimized path (white), and effects (blue) on top. */
+    #overlay, #c-opt, #c-fx {
       position: absolute;
       top: 0; left: 0;
       pointer-events: none;
       background: transparent;
     }
+    #overlay { z-index: 1; }
+    #c-opt   { z-index: 2; }
+    #c-fx    { z-index: 3; }
 
     #tool-label {
       font-size: 10px;
@@ -171,12 +186,26 @@ HTML = """<!DOCTYPE html>
     }
     #dl-menu.open { display: flex; }
     #dl-menu button { border-color: #333; }
+    #dl-menu { min-width: 128px; }
+    .dl-layer {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #999;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+      padding: 2px 2px;
+    }
+    .dl-layer input { accent-color: #777; cursor: pointer; margin: 0; }
+    .dl-sw { width: 10px; height: 10px; border: 1px solid #555; display: inline-block; }
+    .dl-div { width: 100%; border: none; border-top: 1px solid #333; margin: 3px 0; }
 
-    /* ── settings panel ─────────────────────────────── */
-    #settings {
+    /* ── settings panel (shared by the top-left settings and top-right effects) ── */
+    #settings, #fx-settings {
       position: fixed;
       top: 12px;
-      left: 12px;
       z-index: 100;
       font-size: 10px;
       letter-spacing: 0.07em;
@@ -185,7 +214,9 @@ HTML = """<!DOCTYPE html>
       padding: 5px 8px;
       color: #666;
     }
-    #settings summary {
+    #settings    { left: 12px; }
+    #fx-settings { right: 12px; }
+    #settings summary, #fx-settings summary {
       cursor: pointer;
       list-style: none;
       outline: none;
@@ -193,8 +224,28 @@ HTML = """<!DOCTYPE html>
       line-height: 1;
       color: #555;
     }
-    #settings summary:hover { color: #888; }
-    #settings summary::-webkit-details-marker { display: none; }
+    /* The effects panel opens toward the left so its wider rows stay on-screen. */
+    #fx-settings summary { text-align: right; }
+    #settings summary:hover, #fx-settings summary:hover { color: #888; }
+    #settings summary::-webkit-details-marker,
+    #fx-settings summary::-webkit-details-marker { display: none; }
+
+    /* Effect header rows: a checkbox + the effect's name, spanning the grid. */
+    .fx-head {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #888;
+      font-size: 10px;
+      padding-top: 2px;
+      cursor: pointer;
+    }
+    .fx-head input[type="checkbox"] { accent-color: #777; cursor: pointer; margin: 0; }
+    /* A disabled effect's knobs dim but stay visible/editable. */
+    .fx-off { opacity: 0.4; }
 
     .settings-grid {
       display: grid;
@@ -358,6 +409,18 @@ HTML = """<!DOCTYPE html>
     </div>
   </details>
 
+  <details id="fx-settings">
+    <summary>&#10022;</summary>
+    <div class="settings-grid" id="fx-grid">
+      <span class="settings-section">Post-Processing</span>
+      <label class="fx-head" title="Plot only the marks the effects add — skip the base line. Re-run a finished drawing (plot svg) to lay effects over an existing base layer.">
+        <input type="checkbox" id="fx-effects-only"><span>effects only &mdash; skip base line</span>
+      </label>
+      <hr class="settings-divider">
+      <!-- effect checkboxes + knobs are built here by buildEffectsPanel() -->
+    </div>
+  </details>
+
   <div id="status-bar">
     <div class="stat"><div class="dot" id="dot"></div><span id="conn-label">disconnected</span></div>
     <div class="stat">points&nbsp;<span id="pt-count">0</span></div>
@@ -368,30 +431,54 @@ HTML = """<!DOCTYPE html>
   <div id="canvas-wrap">
     <canvas id="c"       width="440" height="586"></canvas>
     <canvas id="overlay" width="440" height="586"></canvas>
+    <canvas id="c-opt"   width="440" height="586"></canvas>
+    <canvas id="c-fx"    width="440" height="586"></canvas>
   </div>
 
   <div style="display:flex; gap:16px; align-items:center;">
     <span id="tool-label">tool: &#8212;</span>
     <button onclick="clearCanvas()">clear</button>
     <div id="dl-wrap">
-      <button onclick="toggleDownloadMenu()">download</button>
+      <button id="dl-btn" onclick="toggleDownloadMenu()">download</button>
       <div id="dl-menu">
+        <label class="dl-layer"><input type="checkbox" id="dl-raw" checked><span class="dl-sw" style="background:#9a9a9a"></span>raw osc</label>
+        <label class="dl-layer"><input type="checkbox" id="dl-opt" checked><span class="dl-sw" style="background:#f2f2f2"></span>optimized</label>
+        <label class="dl-layer"><input type="checkbox" id="dl-fx" checked><span class="dl-sw" style="background:#8fbde0"></span>postproc</label>
+        <hr class="dl-div">
         <button onclick="downloadPNG()">png</button>
         <button onclick="downloadSVG()">svg</button>
       </div>
     </div>
+    <button onclick="uploadSVG()">plot svg</button>
+    <input type="file" id="svg-file" accept=".svg,image/svg+xml" style="display:none">
+    <span id="replay-status" style="font-size:10px; letter-spacing:0.08em;"></span>
   </div>
 
 <script type="module">
-import getStroke from 'https://esm.sh/perfect-freehand';
 
-// Two-canvas setup:
-//   #c       — permanent layer; completed strokes are drawn here and never erased
-//   #overlay — transient layer; the in-progress stroke is redrawn here on every point
+// Layered canvas setup, bottom to top:
+//   #c       — raw OSC layer; completed raw strokes, drawn here and never erased
+//   #overlay — transient layer; the in-progress raw stroke, redrawn on every point
+//   #c-opt   — optimized layer; the post-filter centerline the pen actually follows
+//   #c-fx    — effect layer; only the marks the postprocessing chain adds
 const canvas     = document.getElementById('c');
 const overlay    = document.getElementById('overlay');
 const ctx        = canvas.getContext('2d');
 const overlayCtx = overlay.getContext('2d');
+
+// Fixed per-layer colours (monochrome + one pale blue) — the raw layer no longer
+// uses the drawing's own colour, so all three read as one coherent scheme.
+const RAW_COLOR = '#8a8a8a';   // faded grey — raw OSC input
+const OPT_COLOR = '#f2f2f2';   // white      — optimized centerline
+const FX_COLOR  = '#8fbde0';   // pale blue  — postprocessing additions
+
+// The two server-derived layers. Each accumulates its own strokes (for export)
+// and draws incrementally onto its own canvas as commands stream in.
+//   stroke: { points: [[screenX, screenY, pressure], ...], size }
+const auxLayers = {
+  optimized: { ctx: document.getElementById('c-opt').getContext('2d'), color: OPT_COLOR, strokes: [], cur: null },
+  effect:    { ctx: document.getElementById('c-fx').getContext('2d'),  color: FX_COLOR,  strokes: [], cur: null },
+};
 
 // Drawing surface dimensions in iDraw canvas coordinate units (from OSC canvas_size)
 let surfaceW = 440;
@@ -407,13 +494,19 @@ let originX = 0;
 let originY = 0;
 
 // Current in-progress stroke
-let currentPoints = [];           // [[screenX, screenY, pressure], ...]
+let currentPoints = [];           // [[screenX, screenY, pressure], ...] — for drawing
+let currentRaw    = [];           // [[t, canvasX, canvasY, pressureRaw], ...] — for replay
+let currentMeta   = null;         // { tool, drawingWidth, color, canvasWidth, canvasHeight }
 let currentColor  = 'rgb(255,255,255)';
 let currentSize   = 4;            // stroke size in screen pixels
 let isInStroke    = false;
 
-// All completed strokes, stored for SVG export
-// { type:'stroke', points, color, size } | { type:'dot', x, y, r, color }
+// All completed strokes, kept for SVG export.
+// { points, raw, meta, color, size }
+//
+// `points` are screen pixels and exist only to draw with — they follow the
+// viewport, so they change meaning if origin/size is edited. `raw` is the
+// untouched OSC input and is what gets written to the SVG for replay.
 let completedStrokes = [];
 
 let ptCount     = 0;
@@ -476,23 +569,96 @@ function letterbox() {
 function toScreenX(cx) { const lb = letterbox(); return lb.offsetX + (cx - originX) / surfaceW * lb.drawW; }
 function toScreenY(cy) { const lb = letterbox(); return lb.offsetY + (cy - originY) / surfaceH * lb.drawH; }
 
-// ── perfect-freehand rendering ────────────────────────────────────────────────
+// ── stroke rendering ──────────────────────────────────────────────────────────
 
-function buildPath(points, size, last) {
-  const outline = getStroke(points, {
-    size,
-    thinning: 0.5,
-    smoothing: 0.5,
-    streamline: 0.5,
-    simulatePressure: true,
-    last,
-  });
-  if (!outline.length) return null;
-  const path = new Path2D();
-  path.moveTo(outline[0][0], outline[0][1]);
-  for (let i = 1; i < outline.length; i++) path.lineTo(outline[i][0], outline[i][1]);
-  path.closePath();
-  return path;
+// ── centerline rendering ──────────────────────────────────────────────────────
+//
+// A stroke is drawn as its centerline: one round-capped segment per pair of
+// consecutive points, each segment's width taken from the average pressure of
+// its two endpoints. The geometry on screen and in the SVG is therefore the pen
+// path itself, not an outline around it.
+//
+// thinning sets how strongly pressure drives width. Keeping perfect-freehand's
+// formula so widths stay familiar:
+//   width = size * (1 - thinning + 2 * thinning * pressure)
+// At 0.5 a stroke runs from 0.5x size at zero pressure to 1.5x at full press.
+// Raise it toward 1 for a wider range, drop to 0 for uniform width.
+const STROKE_THINNING = 0.5;
+
+function widthFor(size, pressure) {
+  const p = Math.max(0, Math.min(1, pressure));
+  return Math.max(0.1, size * (1 - STROKE_THINNING + 2 * STROKE_THINNING * p));
+}
+
+// Width of the segment between two points: the average of their pressures.
+function segWidth(size, p1, p2) {
+  return widthFor(size, (p1 + p2) / 2);
+}
+
+function drawSegment(c, a, b, size, color) {
+  c.strokeStyle = color;
+  c.lineCap  = 'round';
+  c.lineJoin = 'round';
+  c.lineWidth = segWidth(size, a[2], b[2]);
+  c.beginPath();
+  c.moveTo(a[0], a[1]);
+  c.lineTo(b[0], b[1]);
+  c.stroke();
+}
+
+// Redraw a whole stroke (used when repainting the permanent layer).
+function drawStroke(c, points, size, color) {
+  if (points.length === 1) {
+    drawDot(c, points[0][0], points[0][1], widthFor(size, points[0][2]) / 2, color);
+    return;
+  }
+  for (let i = 1; i < points.length; i++) drawSegment(c, points[i - 1], points[i], size, color);
+}
+
+// ── server-derived layers (optimized centerline + effect additions) ─────────────
+//
+// The Python server broadcasts the post-filter plot command stream (layer
+// "optimized") and whatever the effect chain adds on top (layer "effect"), both
+// already converted back to canvas pixels. We accumulate strokes per layer and
+// draw them incrementally, with the exact same width function as the raw layer
+// and the SVG export, so every layer's on-screen width matches its export.
+
+function finalizeAux(L) {
+  if (L.cur && L.cur.points.length > 0) L.strokes.push(L.cur);
+  L.cur = null;
+}
+
+// Close any open in-progress strokes — called before an export reads them.
+function finalizeAllAux() {
+  for (const name in auxLayers) finalizeAux(auxLayers[name]);
+}
+
+function handleLayer(msg) {
+  const L = auxLayers[msg.layer];
+  if (!L) return;
+
+  // A new optimized stroke begins (moveto): also close the effect layer's open
+  // stroke, so the previous stroke's added marks don't bridge into this one.
+  if (msg.layer === 'optimized' && msg.kind === 'moveto') finalizeAux(auxLayers.effect);
+
+  if (msg.kind === 'penup' || msg.kind === 'dot_dwell') { finalizeAux(L); return; }
+
+  // moveto / pendown / lineto all carry a canvas-space position.
+  const sx = toScreenX(msg.x);
+  const sy = toScreenY(msg.y);
+  const lb = letterbox();
+  const size = Math.max(1, (msg.drawingWidth || 1.5) * lb.drawW / (msg.canvasWidth || surfaceW));
+
+  // moveto is a pen-up travel to the stroke start: open a fresh stroke, no ink.
+  if (msg.kind === 'moveto') { finalizeAux(L); L.cur = { points: [], size }; return; }
+
+  // pendown / lineto deposit ink.
+  if (!L.cur) L.cur = { points: [], size };
+  L.cur.size = size;
+  const pts = L.cur.points;
+  pts.push([sx, sy, msg.pressure]);
+  if (pts.length === 1) drawDot(L.ctx, sx, sy, widthFor(size, msg.pressure) / 2, L.color);
+  else                  drawSegment(L.ctx, pts[pts.length - 2], pts[pts.length - 1], size, L.color);
 }
 
 // Invert only HSL lightness (L → 1-L), keeping hue and saturation intact.
@@ -531,11 +697,14 @@ function drawDot(c, sx, sy, r, color) {
 // ── canvas management ─────────────────────────────────────────────────────────
 
 function applyPreviewSize() {
-  if (canvas.width  !== previewW) { canvas.width  = previewW;  overlay.width  = previewW;  }
-  if (canvas.height !== previewH) { canvas.height = previewH;  overlay.height = previewH; }
+  const auxCanvases = Object.values(auxLayers).map(L => L.ctx.canvas);
+  if (canvas.width  !== previewW) { canvas.width  = previewW;  overlay.width  = previewW;  auxCanvases.forEach(c => c.width  = previewW); }
+  if (canvas.height !== previewH) { canvas.height = previewH;  overlay.height = previewH;  auxCanvases.forEach(c => c.height = previewH); }
   inpW.value = previewW;
   inpH.value = previewH;
   currentPoints = [];
+  currentRaw    = [];
+  currentMeta   = null;
   isInStroke = false;
 }
 
@@ -544,7 +713,15 @@ function clearCanvas() {
   overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
   completedStrokes = [];
   currentPoints    = [];
+  currentRaw       = [];
+  currentMeta      = null;
   isInStroke       = false;
+  for (const name in auxLayers) {
+    const L = auxLayers[name];
+    L.ctx.clearRect(0, 0, L.ctx.canvas.width, L.ctx.canvas.height);
+    L.strokes = [];
+    L.cur = null;
+  }
   ptCount = strokeCount = 0;
   ptCountEl.textContent   = 0;
   strokeCntEl.textContent = 0;
@@ -560,49 +737,199 @@ document.addEventListener('click', e => {
     document.getElementById('dl-menu').classList.remove('open');
 });
 
+// Save bytes to the server's saved_drawings folder. `b64` is the base64 body
+// of the file (no data: prefix); the server picks a non-clobbering name.
+async function saveToServer(filename, b64) {
+  document.getElementById('dl-menu').classList.remove('open');
+  try {
+    const r = await fetch('/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename, b64 }),
+    });
+    const j = await r.json();
+    if (j.ok) flashSaved('saved ' + j.path);
+    else      flashSaved('save failed');
+  } catch (err) {
+    flashSaved('save failed');
+  }
+}
+
+// The download button has no browser dialog anymore, so briefly report the
+// result in its label.
+function flashSaved(text) {
+  const btn = document.getElementById('dl-btn');
+  const prev = btn.textContent;
+  btn.textContent = text;
+  setTimeout(() => { btn.textContent = prev; }, 1800);
+}
+
+// Which of the three layers the download tickboxes have selected.
+function selectedLayers() {
+  return {
+    raw:       document.getElementById('dl-raw').checked,
+    optimized: document.getElementById('dl-opt').checked,
+    effect:    document.getElementById('dl-fx').checked,
+  };
+}
+
+// Filename tagged with the chosen layers, e.g. drawing_raw-fx.svg / drawing_fx.png.
+function layerFilename(ext, sel) {
+  const tags = [];
+  if (sel.raw)       tags.push('raw');
+  if (sel.optimized) tags.push('opt');
+  if (sel.effect)    tags.push('fx');
+  return 'drawing_' + (tags.join('-') || 'none') + '.' + ext;
+}
+
 function downloadPNG() {
+  const sel = selectedLayers();
   const exp = document.createElement('canvas');
   exp.width = canvas.width; exp.height = canvas.height;
   const ec = exp.getContext('2d');
   ec.fillStyle = '#000';
   ec.fillRect(0, 0, exp.width, exp.height);
-  ec.drawImage(canvas, 0, 0);
-  ec.drawImage(overlay, 0, 0);  // include any in-progress stroke
-  const a = Object.assign(document.createElement('a'), { href: exp.toDataURL('image/png'), download: 'drawing.png' });
-  a.click();
-  document.getElementById('dl-menu').classList.remove('open');
+  // Composite selected layers bottom-to-top, matching the on-screen stack.
+  if (sel.raw)       { ec.drawImage(canvas, 0, 0); ec.drawImage(overlay, 0, 0); }
+  if (sel.optimized) ec.drawImage(auxLayers.optimized.ctx.canvas, 0, 0);
+  if (sel.effect)    ec.drawImage(auxLayers.effect.ctx.canvas, 0, 0);
+  const b64 = exp.toDataURL('image/png').split(',')[1];
+  saveToServer(layerFilename('png', sel), b64);
+}
+
+// Every stroke including the one still in progress, so a download mid-stroke
+// matches what the PNG export shows via the overlay.
+function allStrokes() {
+  const out = [...completedStrokes];
+  if (currentPoints.length > 0) {
+    out.push({ points: currentPoints, raw: currentRaw, meta: currentMeta,
+               color: currentColor, size: currentSize });
+  }
+  return out;
+}
+
+function xmlEscape(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// The recording is the drawing's raw OSC input, verbatim. It is what replay
+// reads; the rendered paths below are only there so the file looks right in a
+// viewer. Numbers go in unrounded — JSON round-trips a float64 exactly, so a
+// replayed point is bit-for-bit the point that was drawn.
+function buildRecording(strokes) {
+  return {
+    format: 'draw2axi-recording',
+    version: 1,
+    strokes: strokes
+      .filter(s => s.raw && s.raw.length && s.meta)
+      .map(s => ({
+        tool:         s.meta.tool,
+        drawingWidth: s.meta.drawingWidth,
+        color:        s.meta.color,
+        canvasWidth:  s.meta.canvasWidth,
+        canvasHeight: s.meta.canvasHeight,
+        points:       s.raw,
+      })),
+  };
+}
+
+// One layer's strokes as SVG parts, all in the given colour. Same width function
+// as the on-screen render, so the file matches the preview exactly.
+function layerSvgParts(strokes, color) {
+  const parts = [];
+  for (const s of strokes) {
+    const p = s.points;
+    if (!p || p.length === 0) continue;
+    if (p.length === 1) {
+      parts.push(`  <circle cx="${p[0][0].toFixed(2)}" cy="${p[0][1].toFixed(2)}"`
+               + ` r="${(widthFor(s.size, p[0][2]) / 2).toFixed(3)}" fill="${color}"/>`);
+      continue;
+    }
+    parts.push(`  <g stroke="${color}" fill="none" stroke-linecap="round">`);
+    for (let i = 1; i < p.length; i++) {
+      const a = p[i - 1], b = p[i];
+      parts.push(`    <path d="M${a[0].toFixed(2)},${a[1].toFixed(2)}`
+               + `L${b[0].toFixed(2)},${b[1].toFixed(2)}"`
+               + ` stroke-width="${segWidth(s.size, a[2], b[2]).toFixed(3)}"/>`);
+    }
+    parts.push(`  </g>`);
+  }
+  return parts;
 }
 
 function downloadSVG() {
+  finalizeAllAux();                  // close open optimized/effect strokes for export
+  const sel = selectedLayers();
   const w = canvas.width, h = canvas.height;
-  // Include any in-progress stroke not yet committed via pen_up (mirrors what PNG does via overlay)
-  const allStrokes = [...completedStrokes];
-  if (currentPoints.length === 1) {
-    const [sx, sy] = currentPoints[0];
-    allStrokes.push({ type: 'dot', x: sx, y: sy, r: currentSize / 2, color: currentColor });
-  } else if (currentPoints.length > 1) {
-    allStrokes.push({ type: 'stroke', points: currentPoints, color: currentColor, size: currentSize });
-  }
-  const parts = allStrokes.map(s => {
-    if (s.type === 'dot') {
-      return `  <circle cx="${s.x.toFixed(1)}" cy="${s.y.toFixed(1)}" r="${s.r.toFixed(1)}" fill="${s.color}"/>`;
-    }
-    const outline = getStroke(s.points, { size: s.size, thinning: 0.5, smoothing: 0.5, streamline: 0.5, last: true });
-    if (!outline.length) return '';
-    const d = outline.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') + 'Z';
-    return `  <path d="${d}" fill="${s.color}"/>`;
-  });
+  const rawStrokes = allStrokes();
+
+  // Bottom-to-top: raw grey, optimized white, effect blue — only the selected ones.
+  const parts = [];
+  if (sel.raw)       parts.push(...layerSvgParts(rawStrokes,                 RAW_COLOR));
+  if (sel.optimized) parts.push(...layerSvgParts(auxLayers.optimized.strokes, OPT_COLOR));
+  if (sel.effect)    parts.push(...layerSvgParts(auxLayers.effect.strokes,    FX_COLOR));
+
+  // The replay recording is the raw OSC input, so it only belongs in files that
+  // include the raw layer; an optimized/effect-only export is a plain drawing.
+  const meta = sel.raw
+    ? [`  <metadata>${xmlEscape(JSON.stringify(buildRecording(rawStrokes)))}</metadata>`]
+    : [];
+
   const svg = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">`,
+    ...meta,
     `  <rect width="${w}" height="${h}" fill="#000"/>`,
     ...parts,
     `</svg>`
   ].join('\\n');
-  const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
-  const a = Object.assign(document.createElement('a'), { href: url, download: 'drawing.svg' });
-  a.click();
-  URL.revokeObjectURL(url);
-  document.getElementById('dl-menu').classList.remove('open');
+
+  // btoa handles Latin-1 only; encode first so non-ASCII survives.
+  const b64 = btoa(unescape(encodeURIComponent(svg)));
+  saveToServer(layerFilename('svg', sel), b64);
+}
+
+// ── replay: upload an SVG and plot it ─────────────────────────────────────────
+
+function uploadSVG() {
+  document.getElementById('svg-file').click();
+}
+
+async function handleSVGFile(e) {
+  const file = e.target.files[0];
+  e.target.value = '';            // let the same file be picked again
+  if (!file) return;
+
+  let rec;
+  try {
+    const doc = new DOMParser().parseFromString(await file.text(), 'image/svg+xml');
+    if (doc.querySelector('parsererror')) throw new Error('not valid SVG');
+    const md = doc.querySelector('metadata');
+    if (!md || !md.textContent.trim()) throw new Error('no recording inside');
+    rec = JSON.parse(md.textContent);
+  } catch (err) {
+    setReplayStatus('not a draw2axi SVG', true);
+    return;
+  }
+  if (rec.format !== 'draw2axi-recording') {
+    setReplayStatus('not a draw2axi SVG', true);
+    return;
+  }
+  if (!_ws || _ws.readyState !== WebSocket.OPEN) {
+    setReplayStatus('not connected', true);
+    return;
+  }
+  const n = (rec.strokes || []).reduce((a, s) => a + (s.points || []).length, 0);
+  _ws.send(JSON.stringify({ type: 'replay', recording: rec }));
+  setReplayStatus(`plotting ${rec.strokes.length} strokes / ${n} pts`, false);
+}
+
+function setReplayStatus(text, isError) {
+  const el = document.getElementById('replay-status');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = isError ? '#884433' : '#557755';
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => { el.textContent = ''; }, 6000);
 }
 
 // ── persistence ───────────────────────────────────────────────────────────────
@@ -733,6 +1060,7 @@ function resetSettings() {
     _ws.send(JSON.stringify({ type: 'set_x_tilt',             value:   0.0   }));
     _ws.send(JSON.stringify({ type: 'set_y_tilt',             value:   0.0   }));
   }
+  resetEffects();
 }
 
 function updateOptUI() {
@@ -797,6 +1125,139 @@ document.getElementById('opt-scale-val').textContent = Math.round(optScale * 100
 updateOptUI();
 updatePenUI();
 
+// ── post-processing effects panel ───────────────────────────────────────────────
+// Built from EFFECT_SPECS, injected by preview.py from postprocess.effect_specs()
+// — so adding an effect (or a knob) in postprocess.py automatically grows the UI
+// here with no edits to this file.
+const EFFECT_SPECS = EFFECT_SPECS_PLACEHOLDER;
+
+// Live enabled/knob state, seeded from the spec defaults then overridden by
+// anything saved in localStorage. This is the source of truth the browser
+// re-sends on every (re)connect, exactly like the settings panel does.
+const fxState = {};
+
+function fxEnKey(name)      { return 'axi_fx_en_' + name; }
+function fxParamKey(name, a){ return 'axi_fx_p_' + name + '_' + a; }
+
+function sendEffectEnabled(name, enabled) {
+  if (_ws && _ws.readyState === WebSocket.OPEN)
+    _ws.send(JSON.stringify({ type: 'set_effect_enabled', name, enabled }));
+}
+function sendEffectParam(name, attr, value) {
+  if (_ws && _ws.readyState === WebSocket.OPEN)
+    _ws.send(JSON.stringify({ type: 'set_effect_param', name, attr, value }));
+}
+
+// Re-send the whole effects state — called from connect()'s onopen so a server
+// (re)start picks up whatever the panel currently shows.
+function syncEffects() {
+  for (const spec of EFFECT_SPECS) {
+    const st = fxState[spec.name];
+    if (!st) continue;
+    sendEffectEnabled(spec.name, st.enabled);
+    for (const p of spec.params) sendEffectParam(spec.name, p.attr, st.params[p.attr]);
+  }
+  sendEffectsOnly(fxOnlyCb.checked);
+}
+
+// "Effects only" plots just the postprocessing marks (no base line).
+const fxOnlyCb = document.getElementById('fx-effects-only');
+function sendEffectsOnly(v) {
+  if (_ws && _ws.readyState === WebSocket.OPEN)
+    _ws.send(JSON.stringify({ type: 'set_effects_only', enabled: v }));
+}
+fxOnlyCb.checked = localStorage.getItem('axi_fx_only') === '1';
+fxOnlyCb.addEventListener('change', () => {
+  localStorage.setItem('axi_fx_only', fxOnlyCb.checked ? '1' : '0');
+  sendEffectsOnly(fxOnlyCb.checked);
+});
+
+function buildEffectsPanel() {
+  const grid = document.getElementById('fx-grid');
+  for (const spec of EFFECT_SPECS) {
+    const st = { enabled: spec.enabled, params: {}, paramEls: [] };
+    fxState[spec.name] = st;
+
+    // Header: checkbox + effect name, spanning the grid.
+    const head = document.createElement('label');
+    head.className = 'fx-head';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id   = 'fx-' + spec.name;
+    const savedEn = localStorage.getItem(fxEnKey(spec.name));
+    st.enabled = savedEn === null ? spec.enabled : savedEn === '1';
+    cb.checked = st.enabled;
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = spec.label;
+    head.appendChild(cb);
+    head.appendChild(nameSpan);
+    grid.appendChild(head);
+
+    const reflect = () => st.paramEls.forEach(el => el.classList.toggle('fx-off', !st.enabled));
+
+    cb.addEventListener('change', () => {
+      st.enabled = cb.checked;
+      localStorage.setItem(fxEnKey(spec.name), cb.checked ? '1' : '0');
+      reflect();
+      sendEffectEnabled(spec.name, cb.checked);
+    });
+
+    // One number input per tunable knob.
+    for (const p of spec.params) {
+      const lab = document.createElement('label');
+      lab.textContent = p.label;
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.id   = 'fxp-' + spec.name + '-' + p.attr;
+      inp.min  = p.min; inp.max = p.max; inp.step = p.step;
+      const savedP = localStorage.getItem(fxParamKey(spec.name, p.attr));
+      const val = savedP === null ? p.default : parseFloat(savedP);
+      inp.value = val;
+      st.params[p.attr] = val;
+      grid.appendChild(lab);
+      grid.appendChild(inp);
+      st.paramEls.push(lab, inp);
+
+      inp.addEventListener('change', () => {
+        let v = parseFloat(inp.value);
+        if (isNaN(v)) { inp.value = st.params[p.attr]; return; }
+        v = Math.max(p.min, Math.min(p.max, v));
+        if (p.int) v = Math.round(v);
+        inp.value = v;
+        st.params[p.attr] = v;
+        localStorage.setItem(fxParamKey(spec.name, p.attr), v);
+        sendEffectParam(spec.name, p.attr, v);
+      });
+    }
+
+    reflect();
+  }
+}
+
+// Restore the effects panel to spec defaults; wired into resetSettings().
+function resetEffects() {
+  for (const spec of EFFECT_SPECS) {
+    const st = fxState[spec.name];
+    if (!st) continue;
+    st.enabled = spec.enabled;
+    const cb = document.getElementById('fx-' + spec.name);
+    if (cb) cb.checked = spec.enabled;
+    localStorage.removeItem(fxEnKey(spec.name));
+    for (const p of spec.params) {
+      st.params[p.attr] = p.default;
+      const inp = document.getElementById('fxp-' + spec.name + '-' + p.attr);
+      if (inp) inp.value = p.default;
+      localStorage.removeItem(fxParamKey(spec.name, p.attr));
+    }
+    st.paramEls.forEach(el => el.classList.toggle('fx-off', !st.enabled));
+  }
+  fxOnlyCb.checked = false;
+  localStorage.removeItem('axi_fx_only');
+  syncEffects();
+}
+
+buildEffectsPanel();
+
 // ── OSC message handler ───────────────────────────────────────────────────────
 
 function handleMessage(msg) {
@@ -812,11 +1273,13 @@ function handleMessage(msg) {
   }
 
   if (msg.type === 'point') {
-    const { x, y, pressure, r, g, b, drawingWidth, tool } = msg;
+    const { t, x, y, pressure, pressureRaw, r, g, b, a, drawingWidth, tool } = msg;
     const sx = toScreenX(x);
     const sy = toScreenY(y);
 
-    currentColor = invertLightness(r, g, b);
+    // Raw OSC layer is always faded grey now (the drawing's own colour is dropped
+    // in favour of the three-layer monochrome scheme).
+    currentColor = RAW_COLOR;
 
     // Scale drawingWidth from canvas units to screen pixels
     const lb = letterbox();
@@ -825,20 +1288,29 @@ function handleMessage(msg) {
     if (!isInStroke) {
       isInStroke = true;
       currentPoints = [];
+      currentRaw    = [];
+      // Recorded once per stroke: these do not change while the pen is down.
+      currentMeta = {
+        tool: tool || 'pen',
+        drawingWidth: drawingWidth,
+        color: { r, g, b, a },
+        canvasWidth: surfaceW,
+        canvasHeight: surfaceH,
+      };
       strokeCount++;
       strokeCntEl.textContent = strokeCount;
     }
 
     currentPoints.push([sx, sy, pressure]);
+    currentRaw.push([t, x, y, pressureRaw]);
 
-    // Redraw in-progress stroke on overlay
-    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
-    overlayCtx.fillStyle = currentColor;
+    // Centerline segments are final once drawn, so extend the overlay rather
+    // than repainting the whole in-progress stroke on every point.
     if (currentPoints.length === 1) {
-      drawDot(overlayCtx, sx, sy, currentSize / 2, currentColor);
+      drawDot(overlayCtx, sx, sy, widthFor(currentSize, pressure) / 2, currentColor);
     } else {
-      const path = buildPath(currentPoints, currentSize, false);
-      if (path) overlayCtx.fill(path);
+      drawSegment(overlayCtx, currentPoints[currentPoints.length - 2],
+                  currentPoints[currentPoints.length - 1], currentSize, currentColor);
     }
 
     ptCount++;
@@ -852,16 +1324,24 @@ function handleMessage(msg) {
     if (currentPoints.length > 0) {
       // Copy overlay pixels exactly — avoids any visual difference from re-rendering
       ctx.drawImage(overlay, 0, 0);
-      if (currentPoints.length === 1) {
-        const [sx, sy] = currentPoints[0];
-        completedStrokes.push({ type: 'dot', x: sx, y: sy, r: currentSize / 2, color: currentColor });
-      } else {
-        completedStrokes.push({ type: 'stroke', points: [...currentPoints], color: currentColor, size: currentSize });
-      }
+      completedStrokes.push({
+        points: [...currentPoints],
+        raw:    [...currentRaw],
+        meta:   currentMeta,
+        color:  currentColor,
+        size:   currentSize,
+      });
     }
     overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
     currentPoints = [];
+    currentRaw    = [];
+    currentMeta   = null;
     isInStroke    = false;
+    return;
+  }
+
+  if (msg.type === 'layer') {
+    handleLayer(msg);
     return;
   }
 
@@ -1001,6 +1481,7 @@ function connect() {
     _ws.send(JSON.stringify({ type: 'set_pressure_update_rate', value:   pressureUpdateRate }));
     _ws.send(JSON.stringify({ type: 'set_x_tilt',               value:   xTiltDeg          }));
     _ws.send(JSON.stringify({ type: 'set_y_tilt',               value:   yTiltDeg          }));
+    syncEffects();   // push the post-processing panel's state too
   };
   _ws.onmessage = (e) => { try { handleMessage(JSON.parse(e.data)); } catch(err) { console.error(err); } };
   _ws.onclose   = () => { dot.classList.remove('live'); connLabel.textContent = 'reconnecting…'; setTimeout(connect, 1500); };
@@ -1011,6 +1492,8 @@ window.clearCanvas        = clearCanvas;
 window.toggleDownloadMenu = toggleDownloadMenu;
 window.downloadPNG        = downloadPNG;
 window.downloadSVG        = downloadSVG;
+window.uploadSVG          = uploadSVG;
+document.getElementById('svg-file').addEventListener('change', handleSVGFile);
 window.requestHome        = requestHome;
 window.resetSettings      = resetSettings;
 window.testPenUp          = testPenUp;
@@ -1021,7 +1504,8 @@ connect();
 </script>
 </body>
 </html>
-""".replace("WS_PORT_PLACEHOLDER", WS_PORT_STR)
+""".replace("WS_PORT_PLACEHOLDER", WS_PORT_STR) \
+   .replace("EFFECT_SPECS_PLACEHOLDER", json.dumps(postprocess.effect_specs()))
 
 
 # ─── HTTP server ──────────────────────────────────────────────────────────────
@@ -1033,8 +1517,52 @@ class _HTMLHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(HTML.encode())
 
+    def do_POST(self):
+        if self.path != "/save":
+            self.send_response(404)
+            self.end_headers()
+            return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            payload = json.loads(self.rfile.read(length))
+            name = _save_drawing(payload["filename"], payload["b64"])
+            self._send_json(200, {"ok": True, "path": name})
+        except Exception as exc:
+            self._send_json(500, {"ok": False, "error": str(exc)})
+
+    def _send_json(self, code, body):
+        data = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def log_message(self, *_):
         pass
+
+
+def _save_drawing(filename: str, b64: str) -> str:
+    """
+    Write base64-encoded bytes into SAVE_DIR, returning the file name used.
+    The requested name is sanitized to its basename and, if a file already
+    exists, gets a numeric suffix so saves never clobber earlier drawings.
+    """
+    os.makedirs(SAVE_DIR, exist_ok=True)
+    base = os.path.basename(filename) or "drawing"
+    base = re.sub(r"[^A-Za-z0-9._-]", "_", base)
+    stem, ext = os.path.splitext(base)
+
+    name = base
+    n = 1
+    while os.path.exists(os.path.join(SAVE_DIR, name)):
+        name = f"{stem}_{n}{ext}"
+        n += 1
+
+    with open(os.path.join(SAVE_DIR, name), "wb") as f:
+        f.write(base64.b64decode(b64))
+    print(f"[preview] saved  →  {os.path.join(SAVE_DIR, name)}")
+    return name
 
 
 # ─── public start function ────────────────────────────────────────────────────
@@ -1052,7 +1580,11 @@ def start(open_browser: bool = True):
         asyncio.set_event_loop(_ws_loop)
 
         async def _serve():
-            async with websockets.serve(_ws_handler, "localhost", WS_PORT):
+            # max_size: an uploaded SVG replay arrives as one frame carrying every
+            # point of a drawing, which easily passes the 1 MB default.
+            async with websockets.serve(
+                _ws_handler, "localhost", WS_PORT, max_size=64 * 1024 * 1024
+            ):
                 await asyncio.Future()
 
         _ws_loop.run_until_complete(_serve())
