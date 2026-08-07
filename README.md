@@ -39,14 +39,42 @@ applies to both paths.
   You can still draw, preview live, and export a plottable SVG to run later —
   see **Path B** below.
 
+### Terminal basics (read this first if you're new to this)
+
+A few steps below say to "open a terminal" and "run" a command. If you've
+never done that:
+
+- A **terminal** is a plain text window where you type commands instead of
+  clicking buttons. On Windows it's called **PowerShell**; on Mac it's called
+  **Terminal**.
+- To **run** a command: type it exactly as shown, or copy it and paste with
+  **Ctrl+V** (Windows) / **Cmd+V** (Mac), then press **Enter**. Nothing
+  happens until you press Enter.
+- A terminal is always "in" one folder, and commands only see the files in
+  that folder — e.g. `python listen_to_idraw.py` only works if the terminal
+  is inside this project's folder. Step 3 below covers getting there.
+- `cd` means "change directory" — it moves the terminal into a folder. For
+  example, `cd Desktop` moves into a folder named "Desktop". You'll use this
+  in Step 3.
+- To see what's in the current folder (useful for double-checking you're in
+  the right place): run `dir` on Windows, `ls` on Mac.
+
+That's everything you need to follow the rest of this guide.
+
 ### 1. Get the code
 
 - **Download ZIP (easiest)** — go to
   [github.com/MarcDunand/Project-Pantograph](https://github.com/MarcDunand/Project-Pantograph),
-  click the green **Code** button → **Download ZIP**, then extract it
-  somewhere you'll remember (e.g. your Desktop).
-- **git clone** — open a terminal (Windows: PowerShell, Mac: Terminal),
-  anywhere, e.g. your Desktop, and run:
+  click the green **Code** button → **Download ZIP**. It saves to your
+  **Downloads** folder by default. Extract it:
+  - **Windows**: right-click the downloaded file → **Extract All** →
+    **Extract**.
+  - **Mac**: double-click the downloaded file — it extracts next to itself.
+  
+  Then move the extracted folder somewhere you'll remember, e.g. your
+  Desktop.
+- **git clone**, if you already use git — open a terminal, `cd` to wherever
+  you want the folder created (e.g. `cd Desktop`), and run:
   ```
   git clone https://github.com/MarcDunand/Project-Pantograph.git
   ```
@@ -55,37 +83,51 @@ applies to both paths.
 
 Skip this if you already have Python 3.10 or newer — check first:
 
-- **Windows**: open PowerShell (search "PowerShell" in the Start menu) and
-  run `python --version`
-- **Mac**: open Terminal (search "Terminal" in Spotlight) and run
-  `python3 --version`
+- **Windows**: open PowerShell (click Start, type "PowerShell", press
+  Enter) and run `python --version`
+- **Mac**: open Terminal (press Cmd+Space, type "Terminal", press Enter) and
+  run `python3 --version`
 
 If that prints 3.10 or higher, move on. Otherwise install it from
-[python.org/downloads](https://www.python.org/downloads/). **On Windows,
-tick "Add python.exe to PATH"** on the installer's first screen — it's easy
-to miss and everything below depends on it.
+[python.org/downloads](https://www.python.org/downloads/) — download and run
+the installer. **On Windows, tick "Add python.exe to PATH"** on the
+installer's first screen — it's easy to miss and everything below depends on
+it.
+
+After installing, close and reopen PowerShell/Terminal before continuing —
+it needs a fresh window to pick up the new install.
+
+**Mac note for the rest of this guide**: Python's commands on Mac are
+`python3` and `pip3`, not `python`/`pip`. Wherever a command below starts
+with `python` or `pip`, type `python3` / `pip3` instead.
 
 ### 3. Open a terminal in the project folder
 
-- **Windows**: open the extracted/cloned folder in File Explorer, click the
-  address bar, type `powershell`, and press Enter.
-- **Mac**: open Terminal, type `cd ` (note the trailing space), then drag the
-  project folder from Finder into the Terminal window and press Enter.
-- If you used `git clone` above, you already have a terminal open — just run
-  `cd Project-Pantograph` in it instead.
+- **Windows**: open the extracted/cloned folder in File Explorer, click once
+  in the empty area of the address bar at the top, type `powershell`, and
+  press Enter. This opens PowerShell already "in" that folder.
+- **Mac**: open Terminal, type `cd ` (note the trailing space, don't press
+  Enter yet), then drag the project folder from Finder into the Terminal
+  window — it fills in the folder's path — and press Enter.
+- If you used `git clone` in Step 1, you already have a terminal open, one
+  level above the new folder — just run `cd Project-Pantograph` in it
+  instead of the above.
 
-Run every command below from this terminal, in this folder.
+**Check it worked**: run `dir` (Windows) or `ls` (Mac) — you should see
+`listen_to_idraw.py` in the list it prints. If you don't, you're in the
+wrong folder — repeat the steps above.
+
+Run every command below from this same terminal window, in this folder.
 
 ### 4. Install the libraries
 
-In the terminal, run:
+Run:
 
 ```
 pip install python-osc websockets rdp numpy
 ```
 
-(Mac: use `pip3` instead of `pip` if `pip` isn't found.) This covers both
-paths below.
+This covers both paths below.
 
 If you have an AxiDraw, you also need `pyaxidraw` — install it by following
 [axidraw.com/doc/py_api](https://axidraw.com/doc/py_api/). That page is the
@@ -94,8 +136,8 @@ duplicated here.
 
 ### 5. Install iDraw OSC on your iPad
 
-Search **"iDraw OSC"** in the App Store and install it — this is the app
-that streams your Apple Pencil strokes to the computer.
+On the iPad, open the **App Store**, search **"iDraw OSC"**, and install it
+— this is the app that streams your Apple Pencil strokes to the computer.
 
 ### 6. Choose your path
 
@@ -124,7 +166,7 @@ that streams your Apple Pencil strokes to the computer.
    - **Port** → `8800`
 4. Draw. Strokes appear in the browser preview and the AxiDraw starts moving.
 
-**Troubleshooting the connection**
+#### Troubleshooting the connection
 
 - Confirm both devices are on the **same Wi-Fi network** — not one on Wi-Fi
   and the other on cellular data or a different network.
@@ -154,7 +196,7 @@ that streams your Apple Pencil strokes to the computer.
   5. Works on any network — dorm, coffee shop, home — since the two devices
      no longer need to reach each other directly.
 
-**Using the preview**
+#### Using the preview
 
 - **settings** (☰, top left) — flip/tilt the output, pen up/down positions,
   variable pressure, path optimization, home the AxiDraw. Full reference:
@@ -169,15 +211,21 @@ that streams your Apple Pencil strokes to the computer.
 
 ### Path B — no AxiDraw
 
+**Connecting iDraw OSC works exactly like Path A above** — same IP/port
+steps, same [Troubleshooting the connection](#troubleshooting-the-connection)
+section, Tailscale included. If drawing on the iPad doesn't show up here,
+go re-read that section — nothing about it changes just because there's no
+AxiDraw.
+
 In the terminal, run:
 
 ```
 python iDraw_to_svg/listen_to_idraw_remote.py
 ```
 
-Everything above in Path A about connecting iDraw OSC (IP/port) and
-troubleshooting the connection — including Tailscale — applies the same
-here. What differs is what the program does with the drawing afterward.
+A browser tab opens at http://localhost:5000, same as Path A. Connect iDraw
+OSC to it the same way (Path A step 3). What differs from here is only what
+the program does with the drawing.
 
 This is `listen_to_idraw.py` with every plotter-specific piece removed: no
 AxiDraw connection, no plotter thread, no path optimizer, no post-processing
