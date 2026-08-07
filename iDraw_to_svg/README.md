@@ -19,7 +19,7 @@ python listen_to_idraw_remote.py
 
 In iDraw OSC (iPad): set IP to your computer's Wi-Fi IP, Port to `8800`.
 The preview opens at http://localhost:5000. Draw, then **download → svg**.
-SVGs land in `remote/saved_drawings/`.
+SVGs land in `iDraw_to_svg/saved_drawings/`.
 
 ## Plotting later
 
@@ -45,5 +45,5 @@ back. The contract is two things:
 **If you change how the recording or its interpretation works in either the
 remote or the full version, you must update BOTH.** The full version's readers/
 writers of this format are: `preview.py` (`buildRecording`, `uploadSVG` replay),
-`listen_to_idraw.py` (`_replay_recording`), `log_to_svg.py`, and
-`svg_transform.py`. A mismatch means SVGs recorded here will misplot there.
+`listen_to_idraw.py` (`_replay_recording`), and `svg_transform.py`. A
+mismatch means SVGs recorded here will misplot there.
