@@ -25,9 +25,14 @@ scratch, with or without an AxiDraw.
 ## Setup
 
 Installs Python, the code, and iDraw OSC, then connects your iPad to this
-program. No prior Python or command-line experience needed. If something
-doesn't work, see **Troubleshooting the connection** under Path A — it
-applies to both paths.
+program. No prior Python or command-line experience needed.
+
+**An AxiDraw is optional.** Without one you still get a live drawing preview
+and can export an SVG to plot later on a machine that has one. The steps
+below are the same either way except where marked — look for **With an
+AxiDraw:** / **No AxiDraw:** notes at those points. If the connection itself
+doesn't work, see **Troubleshooting the connection** in step 8 — that part
+is identical regardless of AxiDraw.
 
 ### What you'll need
 
@@ -36,8 +41,9 @@ applies to both paths.
 - Both devices on the same Wi-Fi network — or see Tailscale below if that's
   not possible (dorm/campus/shared networks often block it).
 - Optionally, an [AxiDraw](https://axidraw.com) pen plotter. No AxiDraw yet?
-  You can still draw, preview live, and export a plottable SVG to run later —
-  see **Path B** below.
+  You can still draw, preview live, and export a plottable SVG to plot later
+  on a machine that has one — this guide covers both, look for the **With an
+  AxiDraw:** / **No AxiDraw:** notes below.
 
 ### Terminal basics (read this first if you're new to this)
 
@@ -127,44 +133,51 @@ Run:
 pip install python-osc websockets rdp numpy
 ```
 
-This covers both paths below.
+This covers everything below.
 
-If you have an AxiDraw, you also need `pyaxidraw` — install it by following
+**With an AxiDraw:** also install `pyaxidraw`, by following
 [axidraw.com/doc/py_api](https://axidraw.com/doc/py_api/). That page is the
 authoritative source and changes with AxiDraw's own software, so it isn't
 duplicated here.
+**No AxiDraw:** nothing else to install.
 
 ### 5. Install iDraw OSC on your iPad
 
 On the iPad, open the **App Store**, search **"iDraw OSC"**, and install it
 — this is the app that streams your Apple Pencil strokes to the computer.
 
-### 6. Choose your path
+### 6. Connect the AxiDraw (skip if you don't have one)
 
-- **Have an AxiDraw, set up and ready?** → **Path A** — `listen_to_idraw.py`
-  plots live as you draw.
-- **No AxiDraw (yet)?** → **Path B** — `iDraw_to_svg/listen_to_idraw_remote.py`
-  gives you the same live preview and lets you download a plottable SVG to
-  run on an AxiDraw later.
+**With an AxiDraw:** connect it over USB; make sure its software is set up
+per [axidraw.com/doc/py_api](https://axidraw.com/doc/py_api/).
+**No AxiDraw:** nothing to do here — skip to the next step.
 
-### Path A — with an AxiDraw
+### 7. Run it
 
-1. Connect the AxiDraw over USB; make sure its software is set up per
-   [axidraw.com/doc/py_api](https://axidraw.com/doc/py_api/).
-2. In the terminal, run:
-   ```
-   python listen_to_idraw.py
-   ```
-   A browser tab opens automatically at http://localhost:5000 — that's your
-   live preview.
-3. **Connect iDraw OSC to it.** On the iPad, open iDraw OSC and set:
-   - **IP** → your computer's Wi-Fi IP address
-     - Windows: PowerShell → run `ipconfig` → under "Wireless LAN adapter
-       Wi-Fi", read **IPv4 Address**
-     - Mac: System Settings → Wi-Fi → your network → Details (or Terminal →
-       run `ipconfig getifaddr en0`)
-   - **Port** → `8800`
-4. Draw. Strokes appear in the browser preview and the AxiDraw starts moving.
+**With an AxiDraw:** in the terminal, run:
+```
+python listen_to_idraw.py
+```
+**No AxiDraw:** in the terminal, run:
+```
+python iDraw_to_svg/listen_to_idraw_remote.py
+```
+
+Either way, a browser tab opens automatically at http://localhost:5000 —
+that's your live preview.
+
+### 8. Connect iDraw OSC to it
+
+On the iPad, open iDraw OSC and set:
+- **IP** → your computer's Wi-Fi IP address
+  - Windows: PowerShell → run `ipconfig` → under "Wireless LAN adapter
+    Wi-Fi", read **IPv4 Address**
+  - Mac: System Settings → Wi-Fi → your network → Details (or Terminal →
+    run `ipconfig getifaddr en0`)
+- **Port** → `8800`
+
+This step, and its troubleshooting below, are identical whether or not you
+have an AxiDraw.
 
 #### Troubleshooting the connection
 
@@ -175,8 +188,8 @@ On the iPad, open the **App Store**, search **"iDraw OSC"**, and install it
 - The green dot in the preview only means the **browser** is talking to the
   Python program on your own computer. It lights up even if nothing from the
   iPad has ever arrived — it is not proof the iPad↔computer link works.
-- In the terminal, run `python listen_to_idraw.py --raw-osc` and draw a
-  stroke:
+- In the terminal, run the same program from step 7 with `--raw-osc` added
+  (e.g. `python listen_to_idraw.py --raw-osc`) and draw a stroke:
   - **Nothing prints** → no data is reaching the computer — a network
     problem, see below.
   - **`/x /y /pressure` messages print but nothing draws** → the connection
@@ -196,44 +209,35 @@ On the iPad, open the **App Store**, search **"iDraw OSC"**, and install it
   5. Works on any network — dorm, coffee shop, home — since the two devices
      no longer need to reach each other directly.
 
-#### Using the preview
+### 9. Draw
 
+**With an AxiDraw:** strokes appear in the browser preview and the AxiDraw
+starts moving as you draw.
+**No AxiDraw:** strokes appear in the browser preview only — nothing plots
+yet. See step 10 for what to do with the drawing.
+
+### 10. Using the preview
+
+**With an AxiDraw:**
 - **settings** (☰, top left) — flip/tilt the output, pen up/down positions,
   variable pressure, path optimization, home the AxiDraw. Full reference:
   [Browser controls](#browser-controls-localhost5000) below.
-- **download** — save the current drawing as PNG or SVG, written to
-  `saved_drawings/`.
 - **effects** (✦, top right) — turn on postprocessing effects like zigzag or
   hatching. Full reference: [Post-processing effects](#post-processing-effects)
   below.
+- **download** — save the current drawing as PNG or SVG, written to
+  `saved_drawings/`.
 - **Ctrl+C** in the terminal lifts the pen and disengages the XY motors so
   the carriage can be pushed home by hand.
 
-### Path B — no AxiDraw
-
-**Connecting iDraw OSC works exactly like Path A above** — same IP/port
-steps, same [Troubleshooting the connection](#troubleshooting-the-connection)
-section, Tailscale included. If drawing on the iPad doesn't show up here,
-go re-read that section — nothing about it changes just because there's no
-AxiDraw.
-
-In the terminal, run:
-
-```
-python iDraw_to_svg/listen_to_idraw_remote.py
-```
-
-A browser tab opens at http://localhost:5000, same as Path A. Connect iDraw
-OSC to it the same way (Path A step 3). What differs from here is only what
-the program does with the drawing.
-
-This is `listen_to_idraw.py` with every plotter-specific piece removed: no
-AxiDraw connection, no plotter thread, no path optimizer, no post-processing
-effects, no paper coordinate mapping, no pen/tilt/flip controls. It produces
-a downloadable SVG (**download → svg** in the preview). Take that file to a
-computer with an AxiDraw set up and load it with the full version's
-**plot svg** button — it plots with whatever paper size, effects, and
-settings you choose then.
+**No AxiDraw:**
+- No settings or effects panel — there's no plotter or postprocessing to
+  configure in this mode.
+- **download → svg** is the point of this mode: it saves a plottable SVG to
+  `iDraw_to_svg/saved_drawings/`. Take that file to a computer with an
+  AxiDraw set up and load it there with the full version's **plot svg**
+  button to plot it asynchronously — with whatever paper size, effects, and
+  settings you choose at that time.
 
 ### Other programs, and going deeper
 
@@ -248,7 +252,7 @@ reference:
 - **[Offline tools](#offline-tools)** — `svg_transform.py`, `dot_healer.py`,
   and other one-off scripts you run by hand on a finished SVG
 - **[iDraw_to_svg internals](#idraw_to_svg-no-axidraw-internals)** —
-  technical notes on Path B, for anyone maintaining it
+  technical notes on the no-AxiDraw run, for anyone maintaining it
 
 ---
 
@@ -446,7 +450,8 @@ deliberate tap-dots are left alone.
 
 ## iDraw_to_svg (no-AxiDraw) internals
 
-What it is and how to run it: [Path B](#path-b--no-axidraw) above.
+What it is and how to run it: the **No AxiDraw** notes in [Setup](#setup)
+above.
 
 - Only needs `python-osc` and `websockets` — no `rdp`, `numpy`, or `pyaxidraw`.
 - Its recording output must stay byte-compatible with what the full version

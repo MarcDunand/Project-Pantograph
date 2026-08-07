@@ -271,6 +271,24 @@
       </div>
     </div>
 
+    <!-- Meeting 8 -->
+    <div class="entry">
+      <div class="card">
+        <span class="badge">Meeting 8</span>
+        <span class="date">August 7, 2026</span>
+        <h2>Tutorial-forward README + Tailscale for locked-down networks</h2>
+        <p class="session">Afternoon/evening session, three commits reworking the README end to end.</p>
+        <p>Shifted the README from a terse technical reference into a <strong>from-scratch onboarding tutorial</strong>, aimed at someone with no prior Python or command-line experience — a step toward handing the project to people outside the two of us.</p>
+        <ul>
+          <li><strong>New Setup walkthrough:</strong> numbered steps from getting the code (ZIP download or <code>git clone</code>) through installing Python, opening a terminal in the right folder, installing dependencies, and installing iDraw OSC on the iPad — splitting into <strong>Path A</strong> (with an AxiDraw) and <strong>Path B</strong> (preview/export only, no AxiDraw needed).</li>
+          <li><strong>"Terminal basics" primer:</strong> added a short explainer of what a terminal is, how to run a command, and what <code>cd</code> does, for readers who've never used one — referenced before the first step that assumes it.</li>
+          <li><strong>Project naming:</strong> introduced <strong>Project Pantograph</strong> as the project's public name, while keeping <code>draw2axi</code> as the internal name for the live-drawing pipeline itself (unchanged throughout the code).</li>
+          <li><strong>Tailscale for blocked networks:</strong> figured out and documented a fix for dorm/campus/shared Wi-Fi networks that block direct device-to-device (P2P) traffic, which otherwise silently breaks the iPad↔computer connection. Installing <strong>Tailscale</strong> on both devices and pointing iDraw OSC at the computer's Tailscale IP (<code>tailscale ip -4</code>) routes around that restriction — works on <em>any</em> network, not just an open one, since the devices no longer need to reach each other directly.</li>
+          <li><strong>Readability + de-duplication pass:</strong> reworked phrasing throughout the tutorial and removed information that was now redundant with the later technical sections, so each fact lives in one place. Also fixed a stale path reference in <code>iDraw_to_svg/README.md</code> (<code>remote/saved_drawings/</code> → <code>iDraw_to_svg/saved_drawings/</code>, left over from the earlier <code>remote/</code> → <code>iDraw_to_svg/</code> rename) and dropped a reference to <code>log_to_svg.py</code> from the recording-format contract list, since that tool doesn't read the format.</li>
+        </ul>
+      </div>
+    </div>
+
   </div><!-- /timeline -->
 
   <section class="status">
