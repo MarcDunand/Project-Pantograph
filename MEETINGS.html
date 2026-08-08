@@ -257,6 +257,21 @@
     <div class="entry">
       <div class="card">
         <span class="badge">Meeting 7</span>
+        <span class="date">July 21, 2026</span>
+        <h2>Drawing session — no development</h2>
+        <p class="session">Evening drawing/plotting session. No code changes and no Claude session; reconstructed from the saved output.</p>
+        <p>A working session at the machine rather than at the keyboard — using the tooling as it stood to actually <strong>make work</strong>, which is the point of the whole project.</p>
+        <ul>
+          <li>Produced <code>drawing_raw_1.svg</code> (saved 6:18&nbsp;PM) — <strong>221 strokes, 33,845 points</strong>, mixing the <em>pen</em> and <em>pencil</em> tools on the usual 834×1194 canvas.</li>
+          <li>That file became the <strong>reference drawing for the next meeting</strong>: it's the real 221-stroke / 33k-point plot that <code>svg_transform.py</code> was verified against on July 23, and the source of <code>drawing_raw_minWidth79.svg</code>, the filter-by-width result saved that evening.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Meeting 8 -->
+    <div class="entry">
+      <div class="card">
+        <span class="badge">Meeting 8</span>
         <span class="date">July 23, 2026</span>
         <h2>Documentation + standalone SVG transforms + replay-crash fix</h2>
         <p class="session">Two sessions across the day — a midday write-up and a longer evening of code.</p>
@@ -271,10 +286,29 @@
       </div>
     </div>
 
-    <!-- Meeting 8 -->
+    <!-- Meeting 9 -->
     <div class="entry">
       <div class="card">
-        <span class="badge">Meeting 8</span>
+        <span class="badge">Meeting 9</span>
+        <span class="date">August 5, 2026</span>
+        <h2>Remote (no-AxiDraw) version + dot healer</h2>
+        <p class="session">Late-afternoon session, four threads in about two hours.</p>
+        <p>The theme was <strong>decoupling drawing from plotting</strong> — letting a drawing be made in one place and plotted in another, later — plus a new offline tool to repair a specific capture artifact.</p>
+        <ul>
+          <li><strong>Wrote up the July 23 meeting</strong> in this log (merging that day's two sessions into a single entry) to bring the history current.</li>
+          <li><strong>Confirmed how stroke ordering is encoded.</strong> It isn't in the visible SVG shapes at all — the <code>&lt;path&gt;</code>/<code>&lt;circle&gt;</code> elements are cosmetic and the plotter never reads them. Ordering is <strong>purely array position</strong> inside the <code>&lt;metadata&gt;</code> recording: the <code>strokes</code> array is drawn in order, and each stroke's <code>points</code> array likewise. The per-point timestamp <code>t</code> only paces replay — it doesn't define order or stroke boundaries. So reordering means reordering the array; there's no z-order attribute to touch.</li>
+          <li><strong>New: <code>remote/</code> — a standalone no-AxiDraw version.</strong> Draw on the iPad, watch the preview, download a correctly-formatted plot SVG, and plot it on the real machine whenever you next have access to one. Two reasons: it lets <strong>Gina draw without needing Marc's plotter</strong>, and it makes the project useful to people who don't own an AxiDraw once we publish. Built as a genuinely independent version — <code>listen_to_idraw_remote.py</code> (OSC listener + stroke segmentation, no plotter thread, optimizer, effects, coordinate mapping, or pen/tilt controls) and <code>preview_remote.py</code> (one raw-OSC drawing layer, one export). Dependencies drop to just <code>python-osc</code> + <code>websockets</code>. <em>(Later renamed <code>iDraw_to_svg/</code>.)</em></li>
+          <li><strong>The cross-version contract.</strong> Because both versions must produce the same file, we pinned down exactly what's shared — the <code>point</code> broadcast shape plus <code>PEN_UP_TIMEOUT_SEC</code> segmentation, and the <code>draw2axi-recording</code> v1 metadata JSON — and wrote "change one, change both" into a header block in each remote source file, <code>remote/README.md</code>, and project memory. Verified end to end by sending real OSC, building the SVG exactly as the browser JS does, and feeding it through <strong>the full tool's own reader</strong> (<code>svg_transform.py</code>): it loads, transforms, and round-trips with the points preserved bit-for-bit. One real bug surfaced in testing — <code>_pen_lock</code> has to be a <em>reentrant</em> lock, since <code>_emit_point</code> holds it while calling <code>_maybe_pen_up</code>; a plain <code>Lock</code> deadlocks. (The same lock the July 23 race fix introduced on the full side.)</li>
+          <li><strong>New tool — <code>dot_healer.py</code>:</strong> repairs strokes the capture tore apart. When the pen moves fast, iDraw's points arrive far enough apart <em>in time</em> that the pen-up timeout fires between them, chopping one continuous line into a trail of single-point strokes — visible in the SVG as the <code>line ── • • • • ── line</code> signature. Since replay draws each recording stroke as one uninterrupted pen-down, the heal is to <strong>merge each such run back into a single stroke</strong>. Guards keep deliberate taps safe: the run must be bracketed by a real (≥2-point) stroke on <em>both</em> sides, every hand-off must be within <code>--max-gap</code>, and strokes must share a canvas and tool. Like <code>svg_transform.py</code>, it rewrites the recording and regenerates the visuals from it.</li>
+          <li><strong>Tuning it against real drawings.</strong> The session produced three new drawings that afternoon — <em>tree</em>, <em>dense</em>, and <em>inkblot</em> — and the latter two are exactly where the tearing shows: <code>drawing_dense.svg</code> came off at <strong>3,185 strokes for only 73k points</strong> and <code>drawing_inkblot.svg</code> at <strong>3,483 strokes for 56k points</strong>, i.e. mostly one-point fragments. That's what prompted the tool. We then dropped the original "at least 2 dots" rule so a single bracketed dot heals too, folding <code>drawing_dense</code> down to 385 strokes (133 runs, 2,263 dots reconnected) while an already-clean file heals nothing. Reviewed a healed result and confirmed the default <code>--max-gap</code> (6% of canvas diagonal) reconnects genuinely-torn strokes without welding separate marks.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Meeting 10 -->
+    <div class="entry">
+      <div class="card">
+        <span class="badge">Meeting 10</span>
         <span class="date">August 7, 2026</span>
         <h2>Tutorial-forward README + Tailscale for locked-down networks</h2>
         <p class="session">Afternoon/evening session, three commits reworking the README end to end.</p>
@@ -297,7 +331,8 @@
       <li>Live pipeline (iPad → preview → AxiDraw) is working.</li>
       <li>Pressure-driven pen depth, tilt/flip calibration, and a percentage-based update throttle for stutter are all in.</li>
       <li>A post-processing framework (<code>postprocess.py</code>) exists with perpendicular pressure lines, mirror, and centerline-width-from-pressure effects, plus SVG upload/replay and terminal-log reconstruction.</li>
-      <li>A standalone offline tool (<code>svg_transform.py</code>) transforms a finished plot SVG — flip H/V and filter-by-min-width — in its own GUI, writing a re-plottable file.</li>
+      <li>Standalone offline tools sit alongside the live pipeline, each rewriting the recording and regenerating visuals from it: <code>svg_transform.py</code> (GUI — flip H/V, filter by min width) and <code>dot_healer.py</code> (rejoin strokes a fast pen tore into a trail of dots).</li>
+      <li>A no-AxiDraw version (<code>iDraw_to_svg/</code>, originally <code>remote/</code>) records drawings to plottable SVGs for plotting later on the real machine — its recording output must stay in sync with the full version.</li>
       <li>The mid-plot stop bug (replay-thread race) is <strong>fixed</strong>.</li>
       <li><span class="open"><strong>Known open items:</strong></span> the replay re-record (double-plot) bug is diagnosed but not yet fixed; preview rendering quality (smoothing) remains a longer-term want from the early plan.</li>
     </ul>
