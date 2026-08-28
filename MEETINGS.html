@@ -323,6 +323,25 @@
       </div>
     </div>
 
+    <!-- Meeting 11 -->
+    <div class="entry">
+      <div class="card">
+        <span class="badge">Meeting 11</span>
+        <span class="date">August 28, 2026</span>
+        <h2>Filmed live demo + the last replay bug closed</h2>
+        <p class="session">A demo shoot, then a long session of code and documentation.</p>
+        <p>The session the project has been building toward: we <strong>filmed a demo of live Project Pantograph control</strong> — Gina drawing on the iPad while the AxiDraw concurrently recreated her drawing on paper. That's the whole premise of the machine, working, on video. The rest of the session went to clearing the last known bug and making the project easier for a newcomer to pick up.</p>
+        <ul>
+          <li><strong>Final video demo:</strong> live end-to-end control captured on video — Gina drawing and the plotter reproducing the strokes as she made them, concurrently rather than after the fact.</li>
+          <li><strong>Double-plot bug — fixed.</strong> The re-record bug diagnosed back on July 17 and deferred ever since. We picked the UX that had been the open question: <em>animate but don't record</em>. Replayed points are now tagged at the source — a thread-local flag on the replay thread adds <code>replay: true</code> to each broadcast, chosen over a plain global because live drawing and a replay can be in flight on different threads at once. The browser latches that flag <strong>once per stroke, from the first point</strong>, deliberately <em>not</em> from the pen-up message: <code>_maybe_pen_up</code> can fire from either the replay thread or the watchdog, so a flag on that message would have let the bug straight back through.</li>
+          <li><strong>Four guard sites, not one.</strong> Beyond the obvious two (don't accumulate raw points, don't push to <code>completedStrokes</code>), two were easy to miss: <code>allStrokes()</code> deliberately includes the <em>in-progress</em> stroke, so a download mid-replay would have captured the playback; and <code>clearCanvas()</code> / <code>applyPreviewSize()</code> both reset stroke state and would have left a sticky flag behind.</li>
+          <li><strong>Verified rather than assumed.</strong> Three levels: end-to-end over real OSC and WebSocket in <code>--dry-run</code> (5 live points tagged false, 7 replayed tagged true, no leakage); the <em>real</em> browser module loaded under a DOM stub and driven directly through six cases; and the bug itself — draw two strokes, replay them, confirm the recording is byte-identical before and after, then export through the page's own writer and read it back with <code>svg_transform.load_svg</code> to get <strong>2 strokes, not 4</strong>. <code>dot_healer</code> and <code>svg_transform</code> self-tests still pass.</li>
+          <li><strong>README — the Terminal/PowerShell confusion.</strong> Sorted out a genuine trip-up: on Windows these are two <em>layers</em>, not two choices — Terminal is the window, PowerShell is the shell running inside it, which is why opening Terminal prints "Windows PowerShell" on line one. The guide now says "terminal" throughout, explains that distinction where a newcomer first meets it, and notes the Windows 10 fallback. One instruction had to keep the old name: the File Explorer address-bar trick takes a program name, and there is no program called <code>terminal</code> — so <code>powershell</code> stays there, with a note saying why. Also reconciled a pre-existing <code>dir</code>-vs-<code>ls</code> inconsistency in favour of <code>ls</code>, which works on both platforms.</li>
+          <li><strong>Tooling:</strong> gave Claude standing permission for shell, file, search, and web tools in <code>.claude/settings.local.json</code> (gitignored, so the broad grant never lands in the repo) rather than approving each command as it came up.</li>
+        </ul>
+      </div>
+    </div>
+
   </div><!-- /timeline -->
 
   <section class="status">
@@ -333,7 +352,8 @@
       <li>A post-processing framework (<code>postprocess.py</code>) exists with perpendicular pressure lines, mirror, and centerline-width-from-pressure effects, plus SVG upload/replay and terminal-log reconstruction.</li>
       <li>Standalone offline tools sit alongside the live pipeline, each rewriting the recording and regenerating visuals from it: <code>svg_transform.py</code> (GUI — flip H/V, filter by min width) and <code>dot_healer.py</code> (rejoin strokes a fast pen tore into a trail of dots).</li>
       <li>A no-AxiDraw version (<code>iDraw_to_svg/</code>, originally <code>remote/</code>) records drawings to plottable SVGs for plotting later on the real machine — its recording output must stay in sync with the full version.</li>
-      <li>The mid-plot stop bug (replay-thread race) is <strong>fixed</strong>.</li>
+      <li>Both replay bugs are <strong>fixed</strong> — the mid-plot stop (thread race) and the double-plot re-record.</li>
+      <li><strong>Demoed live on video:</strong> Gina drawing while the AxiDraw concurrently recreated the drawing on paper.</li>
       <li><span class="open"><strong>Known open items:</strong></span> preview rendering quality (smoothing) remains a longer-term want from the early plan.</li>
     </ul>
   </section>

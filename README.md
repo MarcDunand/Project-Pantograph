@@ -51,8 +51,16 @@ A few steps below say to "open a terminal" and "run" a command. If you've
 never done that:
 
 - A **terminal** is a plain text window where you type commands instead of
-  clicking buttons. On Windows it's called **PowerShell**; on Mac it's called
-  **Terminal**.
+  clicking buttons. On Mac it's called **Terminal**. On Windows 11 it's also
+  called **Terminal**; on Windows 10, open **PowerShell** instead — same
+  idea, older window.
+- **"Terminal" vs "PowerShell" on Windows** — worth 20 seconds, because it
+  confuses nearly everyone. They're two layers, not two choices. *Terminal*
+  is the window: the tabs, the `+` button, and nothing else. *PowerShell* is
+  the program running inside it that actually reads your commands. So when
+  you open Terminal and the first line reads `Windows PowerShell`, nothing
+  has gone wrong — that's just Terminal saying which one it started. Leave
+  it on the default and every command in this guide works.
 - To **run** a command: type it exactly as shown, or copy it and paste with
   **Ctrl+V** (Windows) / **Cmd+V** (Mac), then press **Enter**. Nothing
   happens until you press Enter.
@@ -63,7 +71,8 @@ never done that:
   example, `cd Desktop` moves into a folder named "Desktop". You'll use this
   in Step 3.
 - To see what's in the current folder (useful for double-checking you're in
-  the right place): run `dir` on Windows, `ls` on Mac.
+  the right place): run `ls`. This works on both Mac and Windows. (On
+  Windows, `dir` does the same thing if you've seen that one before.)
 
 That's everything you need to follow the rest of this guide.
 
@@ -89,8 +98,8 @@ That's everything you need to follow the rest of this guide.
 
 Skip this if you already have Python 3.10 or newer — check first:
 
-- **Windows**: open PowerShell (click Start, type "PowerShell", press
-  Enter) and run `python --version`
+- **Windows**: open a terminal (click Start, type "Terminal", press Enter —
+  on Windows 10, type "PowerShell" instead) and run `python --version`
 - **Mac**: open Terminal (press Cmd+Space, type "Terminal", press Enter) and
   run `python3 --version`
 
@@ -100,8 +109,8 @@ the installer. **On Windows, tick "Add python.exe to PATH"** on the
 installer's first screen — it's easy to miss and everything below depends on
 it.
 
-After installing, close and reopen PowerShell/Terminal before continuing —
-it needs a fresh window to pick up the new install.
+After installing, close and reopen the terminal before continuing — it needs
+a fresh window to pick up the new install.
 
 **Mac note for the rest of this guide**: Python's commands on Mac are
 `python3` and `pip3`, not `python`/`pip`. Wherever a command below starts
@@ -111,12 +120,13 @@ with `python` or `pip`, type `python3` / `pip3` instead.
 
 - **Windows**: open the extracted/cloned folder in File Explorer, click once
   in the empty area of the address bar at the top, type `powershell`, and
-  press Enter. This opens PowerShell already "in" that folder. Then, you
-  want to navigate to the folder where you saved the project. You can do
-  this by running the command `ls`. This will list out all folders you can
-  get to from your current folder. Find the correct folder that contains
-  the project and run `cd [folder name]`, which moves you into that folder.
-  Repeat until you are in the `Project-Pantograph` folder.
+  press Enter. This opens a terminal already "in" that folder — nothing more
+  to do. (Type `powershell` here, not `terminal`: this box takes a program
+  name, and there is no program actually named "terminal".)
+  If you instead opened a terminal from the Start menu, it starts in your
+  home folder and you'll need to walk to the project yourself: run `ls` to
+  list the folders you can reach from where you are, then `cd [folder name]`
+  to move into one. Repeat until you're in the `Project-Pantograph` folder.
 - **Mac**: open Terminal, type `cd ` (note the trailing space, don't press
   Enter yet), then drag the project folder from Finder into the Terminal
   window — it fills in the folder's path — and press Enter.
@@ -124,9 +134,9 @@ with `python` or `pip`, type `python3` / `pip3` instead.
   level above the new folder — just run `cd Project-Pantograph` in it
   instead of the above.
 
-**Check it worked**: run `dir` (Windows) or `ls` (Mac) — you should see
-`listen_to_idraw.py` in the list it prints. If you don't, you're in the
-wrong folder — repeat the steps above.
+**Check it worked**: run `ls` — you should see `listen_to_idraw.py` in the
+list it prints. If you don't, you're in the wrong folder — repeat the steps
+above.
 
 Run every command below from this same terminal window, in this folder.
 
@@ -178,7 +188,7 @@ that's your live preview.
 
 On the iPad, open iDraw OSC and set:
 - **IP** → your computer's Wi-Fi IP address
-  - Windows: PowerShell → run `ipconfig` → under "Wireless LAN adapter
+  - Windows: in the terminal, run `ipconfig` → under "Wireless LAN adapter
     Wi-Fi", read **IPv4 Address**
   - Mac: System Settings → Wi-Fi → your network → Details (or Terminal →
     run `ipconfig getifaddr en0`)
@@ -210,7 +220,7 @@ have an AxiDraw.
      [tailscale.com/download](https://tailscale.com/download), and on the
      iPad from the App Store.
   2. Sign in with the **same account** on both.
-  3. On the computer, find its Tailscale IP: in PowerShell/Terminal, run
+  3. On the computer, find its Tailscale IP: in the terminal, run
      `tailscale ip -4` (prints something like `100.x.y.z`).
   4. In iDraw OSC, use that address instead of the Wi-Fi IP. Port stays
      `8800`.
