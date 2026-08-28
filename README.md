@@ -111,7 +111,12 @@ with `python` or `pip`, type `python3` / `pip3` instead.
 
 - **Windows**: open the extracted/cloned folder in File Explorer, click once
   in the empty area of the address bar at the top, type `powershell`, and
-  press Enter. This opens PowerShell already "in" that folder.
+  press Enter. This opens PowerShell already "in" that folder. Then, you
+  want to navigate to the folder where you saved the project. You can do
+  this by running the command `ls`. This will list out all folders you can
+  get to from your current folder. Find the correct folder that contains
+  the project and run `cd [folder name]`, which moves you into that folder.
+  Repeat until you are in the `Project-Pantograph` folder.
 - **Mac**: open Terminal, type `cd ` (note the trailing space, don't press
   Enter yet), then drag the project folder from Finder into the Terminal
   window — it fills in the folder's path — and press Enter.
@@ -153,6 +158,9 @@ per [axidraw.com/doc/py_api](https://axidraw.com/doc/py_api/).
 **No AxiDraw:** nothing to do here — skip to the next step.
 
 ### 7. Run it
+
+First, make sure that your terminal is in the correct folder. If you aren't,
+refer to step 3 for how to get there.
 
 **With an AxiDraw:** in the terminal, run:
 ```
