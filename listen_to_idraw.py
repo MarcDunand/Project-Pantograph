@@ -215,6 +215,17 @@ _plot_lock  = threading.Lock()
 # because _emit_point holds it while calling _maybe_pen_up.
 _pen_lock   = threading.RLock()
 
+# Marks the replay thread so the points it emits can be tagged on the way to the
+# browser. Thread-local rather than a plain global because live OSC input and a
+# replay can be in flight at the same time, on different threads, and each
+# broadcast must carry its own origin. See _emit_point's "replay" field.
+_replay_flag = threading.local()
+
+
+def _in_replay() -> bool:
+    """True when the calling thread is replaying a recording."""
+    return getattr(_replay_flag, "active", False)
+
 _ad               = None   # live AxiDraw handle; used by shutdown cleanup
 _last_plot_pt:    tuple | None = None
 _stroke_had_moves: bool        = False
@@ -754,6 +765,11 @@ def _replay_recording(rec: dict) -> None:
     strokes = rec.get("strokes") or []
     n_pts   = sum(len(s.get("points") or []) for s in strokes)
     print(f"[replay] {len(strokes)} stroke(s), {n_pts} point(s) — starting")
+
+    # Tag every point this thread emits as replay-originated, so the browser
+    # animates it without recording it. Without this the browser re-records the
+    # drawing it is replaying, doubling the canvas and any SVG downloaded after.
+    _replay_flag.active = True
 
     # Rebuild the effects so a replay never inherits state (or RNG position)
     # from whatever was drawn before it.

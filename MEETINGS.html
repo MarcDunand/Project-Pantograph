@@ -246,7 +246,7 @@
         <p class="session">Afternoon session, distinct from the late-night July 16 work.</p>
         <p>With replay and post-processing in place, this meeting was <strong>shaking out bugs in the new replay path</strong> and adding another effect.</p>
         <ul>
-          <li><strong>Double-plot bug (diagnosed, fix deferred):</strong> plotting an uploaded SVG often drew it twice. Root cause found — during replay the server broadcasts each replayed point back to the browser, and the browser <em>records</em> every incoming point, so a replay silently re-records the drawing into the canvas, doubling its geometry; downloading then saves the doubled version. Verified this is doubled file geometry, not a double dispatch. Fix (tag replay broadcasts so the browser renders but doesn't record) deferred pending a UX choice. Logged in project memory as <code>replay-rerecord-bug</code>.</li>
+          <li><strong>Double-plot bug (diagnosed here, fixed later):</strong> plotting an uploaded SVG often drew it twice. Root cause found — during replay the server broadcasts each replayed point back to the browser, and the browser <em>records</em> every incoming point, so a replay silently re-records the drawing into the canvas, doubling its geometry; downloading then saves the doubled version. Verified this is doubled file geometry, not a double dispatch. The fix was deferred at the time pending a UX choice, and later resolved as <em>animate but don't record</em>: replayed points are tagged at the source, so the browser draws them normally but never adds them to the recording.</li>
           <li><strong>Mid-plot stop bug:</strong> a plot stopped ~25% of the way through with no error — investigated the hypothesis that the program thinks the plot finished while the SVG still has lines to draw.</li>
           <li><strong>Mirror effect (new post-processor):</strong> some strokes are drawn both normally and <strong>mirrored vertically over themselves</strong>, governed by two parameters — <em>mirror thresh</em> (max stroke length eligible to be mirrored) and <em>mirror chance</em> (probability an eligible stroke actually gets a mirrored copy).</li>
         </ul>
@@ -334,7 +334,7 @@
       <li>Standalone offline tools sit alongside the live pipeline, each rewriting the recording and regenerating visuals from it: <code>svg_transform.py</code> (GUI — flip H/V, filter by min width) and <code>dot_healer.py</code> (rejoin strokes a fast pen tore into a trail of dots).</li>
       <li>A no-AxiDraw version (<code>iDraw_to_svg/</code>, originally <code>remote/</code>) records drawings to plottable SVGs for plotting later on the real machine — its recording output must stay in sync with the full version.</li>
       <li>The mid-plot stop bug (replay-thread race) is <strong>fixed</strong>.</li>
-      <li><span class="open"><strong>Known open items:</strong></span> the replay re-record (double-plot) bug is diagnosed but not yet fixed; preview rendering quality (smoothing) remains a longer-term want from the early plan.</li>
+      <li><span class="open"><strong>Known open items:</strong></span> preview rendering quality (smoothing) remains a longer-term want from the early plan.</li>
     </ul>
   </section>
 

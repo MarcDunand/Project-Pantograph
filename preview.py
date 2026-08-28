@@ -500,6 +500,14 @@ let currentMeta   = null;         // { tool, drawingWidth, color, canvasWidth, c
 let currentColor  = 'rgb(255,255,255)';
 let currentSize   = 4;            // stroke size in screen pixels
 let isInStroke    = false;
+// True when the in-progress stroke is being replayed from a recording rather
+// than drawn live. Replayed strokes are animated and painted onto the canvas
+// exactly like live ones, but are never pushed into completedStrokes: the
+// recording is already the source of the replay, so recording it again would
+// double the drawing and every SVG downloaded afterwards. Latched from the
+// first point of the stroke so it holds however the pen-up arrives (replay
+// thread or watchdog).
+let currentIsReplay = false;
 
 // All completed strokes, kept for SVG export.
 // { points, raw, meta, color, size }
@@ -706,6 +714,7 @@ function applyPreviewSize() {
   currentRaw    = [];
   currentMeta   = null;
   isInStroke = false;
+  currentIsReplay = false;
 }
 
 function clearCanvas() {
@@ -716,6 +725,7 @@ function clearCanvas() {
   currentRaw       = [];
   currentMeta      = null;
   isInStroke       = false;
+  currentIsReplay  = false;
   for (const name in auxLayers) {
     const L = auxLayers[name];
     L.ctx.clearRect(0, 0, L.ctx.canvas.width, L.ctx.canvas.height);
@@ -801,7 +811,9 @@ function downloadPNG() {
 // matches what the PNG export shows via the overlay.
 function allStrokes() {
   const out = [...completedStrokes];
-  if (currentPoints.length > 0) {
+  // A replayed stroke is excluded for the same reason it never reaches
+  // completedStrokes — downloading mid-replay must not capture the playback.
+  if (currentPoints.length > 0 && !currentIsReplay) {
     out.push({ points: currentPoints, raw: currentRaw, meta: currentMeta,
                color: currentColor, size: currentSize });
   }
@@ -1289,6 +1301,9 @@ function handleMessage(msg) {
       isInStroke = true;
       currentPoints = [];
       currentRaw    = [];
+      // Latched once per stroke: the pen-up may be sent by a different thread
+      // than the points, so it cannot be trusted to carry the flag itself.
+      currentIsReplay = !!msg.replay;
       // Recorded once per stroke: these do not change while the pen is down.
       currentMeta = {
         tool: tool || 'pen',
@@ -1297,12 +1312,18 @@ function handleMessage(msg) {
         canvasWidth: surfaceW,
         canvasHeight: surfaceH,
       };
-      strokeCount++;
-      strokeCntEl.textContent = strokeCount;
+      // The counters describe the recording, so a replay must not inflate them
+      // — replay progress has its own readout (#replay-status).
+      if (!currentIsReplay) {
+        strokeCount++;
+        strokeCntEl.textContent = strokeCount;
+      }
     }
 
+    // Screen points are needed either way to animate the stroke; the raw OSC
+    // points are the recording, so a replay contributes none.
     currentPoints.push([sx, sy, pressure]);
-    currentRaw.push([t, x, y, pressureRaw]);
+    if (!currentIsReplay) currentRaw.push([t, x, y, pressureRaw]);
 
     // Centerline segments are final once drawn, so extend the overlay rather
     // than repainting the whole in-progress stroke on every point.
@@ -1313,8 +1334,10 @@ function handleMessage(msg) {
                   currentPoints[currentPoints.length - 1], currentSize, currentColor);
     }
 
-    ptCount++;
-    ptCountEl.textContent   = ptCount;
+    if (!currentIsReplay) {
+      ptCount++;
+      ptCountEl.textContent = ptCount;
+    }
     pressureEl.textContent  = pressure.toFixed(2);
     toolLabelEl.textContent = 'tool: ' + (tool || '—');
     return;
@@ -1322,21 +1345,26 @@ function handleMessage(msg) {
 
   if (msg.type === 'pen_up') {
     if (currentPoints.length > 0) {
-      // Copy overlay pixels exactly — avoids any visual difference from re-rendering
+      // Copy overlay pixels exactly — avoids any visual difference from re-rendering.
+      // Replayed strokes are painted here too, so playback stays visible; only the
+      // recording bookkeeping below is skipped for them.
       ctx.drawImage(overlay, 0, 0);
-      completedStrokes.push({
-        points: [...currentPoints],
-        raw:    [...currentRaw],
-        meta:   currentMeta,
-        color:  currentColor,
-        size:   currentSize,
-      });
+      if (!currentIsReplay) {
+        completedStrokes.push({
+          points: [...currentPoints],
+          raw:    [...currentRaw],
+          meta:   currentMeta,
+          color:  currentColor,
+          size:   currentSize,
+        });
+      }
     }
     overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
     currentPoints = [];
     currentRaw    = [];
     currentMeta   = null;
     isInStroke    = false;
+    currentIsReplay = false;
     return;
   }
 
