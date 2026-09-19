@@ -1,0 +1,100 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index a2eff61..506d794 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -63,8 +63,11 @@ In the iDraw OSC app, set:
+ derived from them and are ignored in favor of raw x/y.
+ 
+ The burst order observed is: `/x` → `/y` → `/pressure` → `/aspectX` →
+-`/aspectY`. The code emits a point on each `/y` arrival (treating it as the
+-last meaningful field in the burst).
++`/aspectY`. The code marks a point pending on `/y` and emits it when that
++point's `/pressure` arrives, so each point carries its own pressure. Until
++2026-09-19 it emitted on `/y`, which gave every point the previous point's
++pressure. If a `/pressure` is ever missing, the next `/x` or state block emits
++the pending point anyway.
+ 
+ **Pressure quirks.** Raw pressure runs 0 → `OSC_PRESSURE_MAX` (4.166666507720947,
+ Apple Pencil at full press); finger input reports a constant value. iDraw also
+diff --git a/README.md b/README.md
+index c2ef4c4..8158491 100644
+--- a/README.md
++++ b/README.md
+@@ -366,7 +366,9 @@ aggressiveness for a predictable ceiling.
+ 
+ ### Pressure
+ 
+-Raw iDraw pressure is normalised by `OSC_PRESSURE_MAX` (≈4.167). With **variable
++iDraw sends each point as `/x`, `/y`, `/pressure`, so a point is emitted when
++its `/pressure` arrives and carries its own pressure. Raw iDraw pressure is
++normalised by `OSC_PRESSURE_MAX` (≈4.167). With **variable
+ pressure** on, normalised pressure maps between the min and max pen-down servo
+ positions, updated mid-stroke at the configured rate.
+ 
+diff --git a/listen_to_idraw.py b/listen_to_idraw.py
+index fbd7c7a..69a1707 100644
+--- a/listen_to_idraw.py
++++ b/listen_to_idraw.py
+@@ -904,6 +904,7 @@ def _state_block_seen():
+     must end before the block's new colour/width/tool land in `state`). The first
+     message of a block does the work; the rest find no stroke open.
+     """
++    _flush_point()      # a point still waiting on its /pressure belongs to the old stroke
+     if state["_pen_is_down"]:
+         _end_stroke()
+ 
+@@ -1002,7 +1003,7 @@ def _flush_pending_024(next_pressure: float, from_pressure: float | None = None)
+ 
+ def _emit_point():
+     """
+-    Fires on every /y message (the last field in each OSC burst).
++    Fires once per point, when its burst is complete — see _flush_point().
+     Streams plot commands to the deque in real time and broadcasts to the preview.
+ 
+     Two optimisation layers fire here:
+@@ -1127,13 +1128,33 @@ def _emit_point():
+         )
+ 
+ 
++# iDraw sends each point as /x, /y, /pressure (then /aspectX, /aspectY). A point
++# is only complete once its /pressure arrives: emitting on /y, as this used to,
++# gave every point the *previous* point's pressure — and a stroke's first point
++# the last pressure of the stroke before. /y marks the point pending; /pressure
++# emits it. Should a /pressure ever go missing, the next /x or state block
++# emits the pending point anyway (with the last pressure seen), so no point is
++# lost.
++_point_pending = False
++
++
++def _flush_point():
++    """Emit the pending point, if there is one."""
++    global _point_pending
++    if _point_pending:
++        _point_pending = False
++        _emit_point()
++
++
+ def _handle_x(address, *args):
+     if _show_raw_osc: _log_raw(address, *args)
++    _flush_point()      # a previous point still waiting means its /pressure never came
+     state["x"] = args[0]
+ 
+ def _handle_pressure(address, *args):
+     if _show_raw_osc: _log_raw(address, *args)
+     state["pressure"] = args[0]
++    _flush_point()
+ 
+ # Every handler for a state-block field calls _state_block_seen() first — see
+ # STROKE BOUNDARIES.
+@@ -1172,9 +1193,10 @@ def _handle_aspect(address, *args):
+     if _show_raw_osc: _log_raw(address, *args)
+ 
+ def _handle_y(address, *args):
++    global _point_pending
+     if _show_raw_osc: _log_raw(address, *args)
+     state["y"] = args[0]
+-    _emit_point()   # /y is always the last field per burst
++    _point_pending = True   # emitted when this point's /pressure arrives
+ 
+ def _handle_canvas_width(address, *args):
+     if _show_raw_osc: _log_raw(address, *args)
