@@ -46,60 +46,21 @@ Self-test (no GUI):  python svg_transform.py --selftest path/to/some.svg
 
 import argparse
 import copy
-import json
-import re
 import sys
 from pathlib import Path
 from statistics import mean
 
-# ── constants (mirrored from the pipeline so this runs with no extra deps) ─────
-OSC_PRESSURE_MAX      = 4.166666507720947
-STROKE_THINNING       = 0.5          # matches preview.py / log_to_svg
-DEFAULT_DRAWING_WIDTH = 1.5
-_EPS                  = 1e-9
+# The recording format lives in recording.py; these are re-exported so older
+# imports (`from svg_transform import load_svg, build_svg`) keep working.
+from recording import (DEFAULT_DRAWING_WIDTH, OSC_PRESSURE_MAX, build_svg,  # noqa: F401
+                       load_svg, width_for)
 
-_METADATA_RE = re.compile(r"<metadata>(.*?)</metadata>", re.S)
-_SVG_SIZE_RE = re.compile(r'<svg[^>]*\bwidth="([\d.]+)"[^>]*\bheight="([\d.]+)"')
+_EPS = 1e-9
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CORE (pure functions — no GUI, importable and testable)
 # ──────────────────────────────────────────────────────────────────────────────
-def _clamp01(v: float) -> float:
-    return 0.0 if v < 0 else 1.0 if v > 1.0 else v
-
-
-def width_for(size: float, pressure_norm: float) -> float:
-    """Rendered/plotted line width for a point. Identical to preview.widthFor."""
-    p = _clamp01(pressure_norm)
-    return max(0.1, size * (1 - STROKE_THINNING + 2 * STROKE_THINNING * p))
-
-
-def load_svg(path) -> tuple[dict, float, float]:
-    """
-    Read a plot SVG. Returns (recording, viewport_w, viewport_h).
-    Raises ValueError if the file carries no draw2axi recording.
-    """
-    text = Path(path).read_text(encoding="utf-8", errors="replace")
-    m = _METADATA_RE.search(text)
-    if not m or not m.group(1).strip():
-        raise ValueError("no <metadata> recording found — not a draw2axi plot SVG")
-    meta = (m.group(1)
-            .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">"))
-    rec = json.loads(meta)
-    if rec.get("format") != "draw2axi-recording":
-        raise ValueError(f"unexpected recording format: {rec.get('format')!r}")
-
-    sm = _SVG_SIZE_RE.search(text)
-    if sm:
-        vw, vh = float(sm.group(1)), float(sm.group(2))
-    else:
-        # Fall back to the largest per-stroke canvas.
-        cws = [s.get("canvasWidth")  or 0 for s in rec.get("strokes", [])]
-        chs = [s.get("canvasHeight") or 0 for s in rec.get("strokes", [])]
-        vw, vh = (max(cws) or 1.0), (max(chs) or 1.0)
-    return rec, vw, vh
-
 
 def _stroke_canvas(stroke: dict, viewport_w: float, viewport_h: float) -> tuple[float, float]:
     cw = stroke.get("canvasWidth")  or viewport_w
@@ -192,43 +153,6 @@ def transform(rec0: dict, viewport_w: float, viewport_h: float, *,
     stats["flip_h"] = flip_h
     stats["flip_v"] = flip_v
     return rec, stats
-
-
-def build_svg(rec: dict, viewport_w: float, viewport_h: float) -> str:
-    """
-    Serialize a recording back to a plot SVG, in the same shape the pipeline
-    emits: embedded metadata + white centerline segments on black, each segment
-    width taken from the mean pressure of its endpoints (per-stroke drawingWidth).
-    """
-    parts = []
-    for s in rec.get("strokes", []):
-        size = s.get("drawingWidth", DEFAULT_DRAWING_WIDTH)
-        pts = s.get("points") or []
-        if not pts:
-            continue
-        if len(pts) == 1:
-            x, y, praw = pts[0][1], pts[0][2], pts[0][3]
-            r = width_for(size, praw / OSC_PRESSURE_MAX) / 2
-            parts.append(f'  <circle cx="{x:.2f}" cy="{y:.2f}" r="{r:.3f}" fill="#fff"/>')
-            continue
-        parts.append('  <g stroke="#fff" fill="none" stroke-linecap="round">')
-        for a, b in zip(pts, pts[1:]):
-            pa = a[3] / OSC_PRESSURE_MAX
-            pb = b[3] / OSC_PRESSURE_MAX
-            w = width_for(size, (pa + pb) / 2.0)
-            parts.append(f'    <path d="M{a[1]:.2f},{a[2]:.2f}L{b[1]:.2f},{b[2]:.2f}"'
-                         f' stroke-width="{w:.3f}"/>')
-        parts.append('  </g>')
-
-    meta = (json.dumps(rec, separators=(",", ":"))
-            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
-    return "\n".join([
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{viewport_w:.0f}" height="{viewport_h:.0f}">',
-        f'  <metadata>{meta}</metadata>',
-        f'  <rect width="{viewport_w:.0f}" height="{viewport_h:.0f}" fill="#000"/>',
-        *parts,
-        '</svg>',
-    ])
 
 
 # ──────────────────────────────────────────────────────────────────────────────

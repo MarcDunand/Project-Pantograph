@@ -2,37 +2,45 @@
 preview.py
 
 Live drawing preview server.
-Opens a local web page that displays strokes as they arrive from iDraw OSC.
-Communicates with listen_to_idraw.py via a simple WebSocket broadcast.
+Serves a local web page that displays strokes as they arrive from iDraw OSC,
+and a WebSocket feed (/ws) between that page and listen_to_idraw.py — both on
+one port, bound to 127.0.0.1 only.
 
-Run:   called automatically by listen_to_idraw.py
-       (or standalone: python preview.py)
-
-Then open:  http://localhost:5000
+Run:   started by listen_to_idraw.py, which opens the page
+       (http://127.0.0.1:5810, or the next free port up to 5830)
 """
 
 import asyncio
 import base64
+import http
 import json
+import logging
 import os
 import re
 import threading
-import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import websockets
+from websockets.asyncio.server import serve
+from websockets.datastructures import Headers
+from websockets.http11 import Response
 
 import postprocess
 
+log = logging.getLogger("pantograph.preview")
+
 # ─── configuration ────────────────────────────────────────────────────────────
 
-HTTP_PORT  = 5000        # browser page
-WS_PORT    = 5001        # WebSocket feed
+# The UI's port: the first free one in this range. Not 5000, which AirPlay
+# Receiver holds on many Macs.
+DEFAULT_PORTS = range(5810, 5831)
 
-# Downloads from the preview are written here — an existing folder next to this
-# program — rather than the browser's Downloads folder (the browser controls
-# that and a web page can't redirect it, so the page POSTs the bytes to us).
+# Downloads from the preview are written here rather than the browser's
+# Downloads folder (the browser controls that and a web page can't redirect
+# it, so the page sends the bytes to us). listen_to_idraw points this at the
+# user's drawings folder; this default only applies when used on its own.
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_drawings")
+
+port: int | None = None   # the port in use, once start() has run
+_server = None
 
 # ─── shared broadcast set ─────────────────────────────────────────────────────
 
@@ -42,12 +50,28 @@ flip_x = False     # set by browser via WebSocket; mirrors plotter X axis
 flip_y = False     # set by browser via WebSocket; mirrors plotter Y axis
 
 _message_callback = None   # called for browser → Python messages listen_to_idraw registers
+_hello_provider   = None   # builds the snapshot sent to each page as it connects
+_listeners: list  = []     # called with every broadcast message (the session recorder)
 
 
 def register_message_callback(cb):
-    """Let listen_to_idraw.py receive browser control messages (e.g. home)."""
+    """
+    Let listen_to_idraw.py receive browser control messages (e.g. home). If the
+    callback returns a dict, it's sent back to the page that sent the message.
+    """
     global _message_callback
     _message_callback = cb
+
+
+def register_hello_provider(fn):
+    """fn() → the 'hello' message a page gets on connecting: everything it needs to catch up."""
+    global _hello_provider
+    _hello_provider = fn
+
+
+def add_listener(fn):
+    """fn(message) is called with every broadcast message, on the broadcasting thread."""
+    _listeners.append(fn)
 
 
 # ─── WebSocket server ─────────────────────────────────────────────────────────
@@ -55,8 +79,13 @@ def register_message_callback(cb):
 async def _ws_handler(websocket):
     """Accept a browser connection; handle incoming control messages."""
     global flip_x, flip_y
+    # Snapshot and join in one step (no await between), so nothing broadcast
+    # meanwhile is lost; at worst a message lands in both, which redraws harmlessly.
+    hello = _hello_provider() if _hello_provider else None
     _ws_clients.add(websocket)
     try:
+        if hello is not None:
+            await websocket.send(json.dumps(hello))
         async for raw in websocket:
             try:
                 msg = json.loads(raw)
@@ -64,19 +93,29 @@ async def _ws_handler(websocket):
                     flip_x = bool(msg.get("enabled", False))
                 elif msg.get("type") == "set_flip_y":
                     flip_y = bool(msg.get("enabled", False))
+                elif msg.get("type") == "save_file":
+                    await websocket.send(json.dumps(_save_reply(msg)))
                 elif _message_callback:
-                    _message_callback(msg)
+                    reply = _message_callback(msg)
+                    if isinstance(reply, dict):
+                        await websocket.send(json.dumps(reply))
             except Exception:
-                pass
+                log.exception("[preview] error handling a message from the page")
     finally:
         _ws_clients.discard(websocket)
 
 
 def broadcast(message: dict):
     """
-    Thread-safe broadcast of a dict to all connected browsers.
-    Called from the OSC thread in listen_to_idraw.py.
+    Thread-safe broadcast of a dict to all connected browsers (and to every
+    listener, whether or not a browser is open). Called from the engine's
+    threads.
     """
+    for fn in _listeners:
+        try:
+            fn(message)
+        except Exception:
+            log.exception("[preview] listener failed")
     if _ws_loop is None or not _ws_clients:
         return
     payload = json.dumps(message)
@@ -94,8 +133,6 @@ async def _broadcast_async(payload: str):
 
 
 # ─── HTML page ────────────────────────────────────────────────────────────────
-
-WS_PORT_STR = str(WS_PORT)
 
 HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -437,7 +474,7 @@ HTML = """<!DOCTYPE html>
 
   <div style="display:flex; gap:16px; align-items:center;">
     <span id="tool-label">tool: &#8212;</span>
-    <button onclick="clearCanvas()">clear</button>
+    <button onclick="newDrawing()">new drawing</button>
     <div id="dl-wrap">
       <button id="dl-btn" onclick="toggleDownloadMenu()">download</button>
       <div id="dl-menu">
@@ -461,6 +498,37 @@ HTML = """<!DOCTYPE html>
 //   #overlay — transient layer; the in-progress raw stroke, redrawn on every point
 //   #c-opt   — optimized layer; the post-filter centerline the pen actually follows
 //   #c-fx    — effect layer; only the marks the postprocessing chain adds
+// ── settings storage ──────────────────────────────────────────────────────────
+// The settings live in a file on the computer, which is the source of truth;
+// the browser's storage is only this page's copy. Every change is pushed to the
+// computer (debounced), and when the page connects the computer's copy wins
+// (see 'hello' in handleMessage).
+const store = {
+  get:    k      => localStorage.getItem(k),
+  set:    (k, v) => { localStorage.setItem(k, v); pushSettingsSoon(); },
+  remove: k      => { localStorage.removeItem(k); pushSettingsSoon(); },
+};
+function localSettings() {
+  const v = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k.startsWith('axi_')) v[k] = localStorage.getItem(k);
+  }
+  return v;
+}
+let _pushTimer = null;
+function pushSettingsSoon() {
+  clearTimeout(_pushTimer);
+  _pushTimer = setTimeout(() => {
+    if (_ws && _ws.readyState === WebSocket.OPEN)
+      _ws.send(JSON.stringify({ type: 'save_settings', values: localSettings() }));
+  }, 300);
+}
+function sameSettings(a, b) {
+  const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
+  return ka.length === kb.length && ka.every((k, i) => k === kb[i] && a[k] === b[k]);
+}
+
 const canvas     = document.getElementById('c');
 const overlay    = document.getElementById('overlay');
 const ctx        = canvas.getContext('2d');
@@ -737,6 +805,13 @@ function clearCanvas() {
   strokeCntEl.textContent = 0;
 }
 
+// The drawing lives on the computer: ask it to save this one and start fresh.
+// Every open page clears when the 'new_drawing' message comes back.
+function newDrawing() {
+  if (_ws && _ws.readyState === WebSocket.OPEN)
+    _ws.send(JSON.stringify({ type: 'new_drawing' }));
+}
+
 // ── download ──────────────────────────────────────────────────────────────────
 
 function toggleDownloadMenu() {
@@ -747,22 +822,13 @@ document.addEventListener('click', e => {
     document.getElementById('dl-menu').classList.remove('open');
 });
 
-// Save bytes to the server's saved_drawings folder. `b64` is the base64 body
-// of the file (no data: prefix); the server picks a non-clobbering name.
-async function saveToServer(filename, b64) {
+// Save bytes to the server's drawings folder. `b64` is the base64 body of the
+// file (no data: prefix); the server picks a non-clobbering name and answers
+// with a 'saved' message (see handleMessage).
+function saveToServer(filename, b64) {
   document.getElementById('dl-menu').classList.remove('open');
-  try {
-    const r = await fetch('/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename, b64 }),
-    });
-    const j = await r.json();
-    if (j.ok) flashSaved('saved ' + j.path);
-    else      flashSaved('save failed');
-  } catch (err) {
-    flashSaved('save failed');
-  }
+  if (!_ws || _ws.readyState !== WebSocket.OPEN) { flashSaved('save failed'); return; }
+  _ws.send(JSON.stringify({ type: 'save_file', filename, b64 }));
 }
 
 // The download button has no browser dialog anymore, so briefly report the
@@ -807,97 +873,13 @@ function downloadPNG() {
   saveToServer(layerFilename('png', sel), b64);
 }
 
-// Every stroke including the one still in progress, so a download mid-stroke
-// matches what the PNG export shows via the overlay.
-function allStrokes() {
-  const out = [...completedStrokes];
-  // A replayed stroke is excluded for the same reason it never reaches
-  // completedStrokes — downloading mid-replay must not capture the playback.
-  if (currentPoints.length > 0 && !currentIsReplay) {
-    out.push({ points: currentPoints, raw: currentRaw, meta: currentMeta,
-               color: currentColor, size: currentSize });
-  }
-  return out;
-}
-
-function xmlEscape(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-// The recording is the drawing's raw OSC input, verbatim. It is what replay
-// reads; the rendered paths below are only there so the file looks right in a
-// viewer. Numbers go in unrounded — JSON round-trips a float64 exactly, so a
-// replayed point is bit-for-bit the point that was drawn.
-function buildRecording(strokes) {
-  return {
-    format: 'draw2axi-recording',
-    version: 1,
-    strokes: strokes
-      .filter(s => s.raw && s.raw.length && s.meta)
-      .map(s => ({
-        tool:         s.meta.tool,
-        drawingWidth: s.meta.drawingWidth,
-        color:        s.meta.color,
-        canvasWidth:  s.meta.canvasWidth,
-        canvasHeight: s.meta.canvasHeight,
-        points:       s.raw,
-      })),
-  };
-}
-
-// One layer's strokes as SVG parts, all in the given colour. Same width function
-// as the on-screen render, so the file matches the preview exactly.
-function layerSvgParts(strokes, color) {
-  const parts = [];
-  for (const s of strokes) {
-    const p = s.points;
-    if (!p || p.length === 0) continue;
-    if (p.length === 1) {
-      parts.push(`  <circle cx="${p[0][0].toFixed(2)}" cy="${p[0][1].toFixed(2)}"`
-               + ` r="${(widthFor(s.size, p[0][2]) / 2).toFixed(3)}" fill="${color}"/>`);
-      continue;
-    }
-    parts.push(`  <g stroke="${color}" fill="none" stroke-linecap="round">`);
-    for (let i = 1; i < p.length; i++) {
-      const a = p[i - 1], b = p[i];
-      parts.push(`    <path d="M${a[0].toFixed(2)},${a[1].toFixed(2)}`
-               + `L${b[0].toFixed(2)},${b[1].toFixed(2)}"`
-               + ` stroke-width="${segWidth(s.size, a[2], b[2]).toFixed(3)}"/>`);
-    }
-    parts.push(`  </g>`);
-  }
-  return parts;
-}
-
+// The SVG is built on the computer, from its recording of the session — so it's
+// complete even if this page was opened halfway through.
 function downloadSVG() {
-  finalizeAllAux();                  // close open optimized/effect strokes for export
+  document.getElementById('dl-menu').classList.remove('open');
+  if (!_ws || _ws.readyState !== WebSocket.OPEN) { flashSaved('save failed'); return; }
   const sel = selectedLayers();
-  const w = canvas.width, h = canvas.height;
-  const rawStrokes = allStrokes();
-
-  // Bottom-to-top: raw grey, optimized white, effect blue — only the selected ones.
-  const parts = [];
-  if (sel.raw)       parts.push(...layerSvgParts(rawStrokes,                 RAW_COLOR));
-  if (sel.optimized) parts.push(...layerSvgParts(auxLayers.optimized.strokes, OPT_COLOR));
-  if (sel.effect)    parts.push(...layerSvgParts(auxLayers.effect.strokes,    FX_COLOR));
-
-  // The replay recording is the raw OSC input, so it only belongs in files that
-  // include the raw layer; an optimized/effect-only export is a plain drawing.
-  const meta = sel.raw
-    ? [`  <metadata>${xmlEscape(JSON.stringify(buildRecording(rawStrokes)))}</metadata>`]
-    : [];
-
-  const svg = [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">`,
-    ...meta,
-    `  <rect width="${w}" height="${h}" fill="#000"/>`,
-    ...parts,
-    `</svg>`
-  ].join('\\n');
-
-  // btoa handles Latin-1 only; encode first so non-ASCII survives.
-  const b64 = btoa(unescape(encodeURIComponent(svg)));
-  saveToServer(layerFilename('svg', sel), b64);
+  _ws.send(JSON.stringify({ type: 'save_svg', filename: layerFilename('svg', sel), layers: sel }));
 }
 
 // ── replay: upload an SVG and plot it ─────────────────────────────────────────
@@ -957,74 +939,74 @@ const _STORAGE_KEYS = [
 
 function saveSettings() {
   if (previewSizeManual) {
-    localStorage.setItem('axi_previewW', previewW);
-    localStorage.setItem('axi_previewH', previewH);
-    localStorage.setItem('axi_previewSizeManual', '1');
+    store.set('axi_previewW', previewW);
+    store.set('axi_previewH', previewH);
+    store.set('axi_previewSizeManual', '1');
   } else {
-    localStorage.removeItem('axi_previewW');
-    localStorage.removeItem('axi_previewH');
-    localStorage.removeItem('axi_previewSizeManual');
+    store.remove('axi_previewW');
+    store.remove('axi_previewH');
+    store.remove('axi_previewSizeManual');
   }
-  localStorage.setItem('axi_originX', originX);
-  localStorage.setItem('axi_originY', originY);
-  localStorage.setItem('axi_flipX', inpFlipX.checked ? '1' : '0');
-  localStorage.setItem('axi_flipY', inpFlipY.checked ? '1' : '0');
-  localStorage.setItem('axi_optEnabled',   optEnabled ? '1' : '0');
-  localStorage.setItem('axi_optScale',     optScale);
-  localStorage.setItem('axi_lagThreshold', lagThreshold);
-  localStorage.setItem('axi_limitLag',     limitLag ? '1' : '0');
-  localStorage.setItem('axi_minDist',      minDist);
-  localStorage.setItem('axi_varPressure',        varPressure ? '1' : '0');
-  localStorage.setItem('axi_penPosUp',           penPosUp);
-  localStorage.setItem('axi_penDownMin',         penDownMin);
-  localStorage.setItem('axi_penDownMax',         penDownMax);
-  localStorage.setItem('axi_pressureUpdateRate', pressureUpdateRate);
-  localStorage.setItem('axi_xTilt',             xTiltDeg);
-  localStorage.setItem('axi_yTilt',             yTiltDeg);
+  store.set('axi_originX', originX);
+  store.set('axi_originY', originY);
+  store.set('axi_flipX', inpFlipX.checked ? '1' : '0');
+  store.set('axi_flipY', inpFlipY.checked ? '1' : '0');
+  store.set('axi_optEnabled',   optEnabled ? '1' : '0');
+  store.set('axi_optScale',     optScale);
+  store.set('axi_lagThreshold', lagThreshold);
+  store.set('axi_limitLag',     limitLag ? '1' : '0');
+  store.set('axi_minDist',      minDist);
+  store.set('axi_varPressure',        varPressure ? '1' : '0');
+  store.set('axi_penPosUp',           penPosUp);
+  store.set('axi_penDownMin',         penDownMin);
+  store.set('axi_penDownMax',         penDownMax);
+  store.set('axi_pressureUpdateRate', pressureUpdateRate);
+  store.set('axi_xTilt',             xTiltDeg);
+  store.set('axi_yTilt',             yTiltDeg);
 }
 
 function loadSettings() {
-  if (localStorage.getItem('axi_previewSizeManual')) {
+  if (store.get('axi_previewSizeManual')) {
     previewSizeManual = true;
-    const w = parseInt(localStorage.getItem('axi_previewW'));
-    const h = parseInt(localStorage.getItem('axi_previewH'));
+    const w = parseInt(store.get('axi_previewW'));
+    const h = parseInt(store.get('axi_previewH'));
     if (w > 0) previewW = w;
     if (h > 0) previewH = h;
   }
-  const ox = parseFloat(localStorage.getItem('axi_originX'));
-  const oy = parseFloat(localStorage.getItem('axi_originY'));
+  const ox = parseFloat(store.get('axi_originX'));
+  const oy = parseFloat(store.get('axi_originY'));
   if (!isNaN(ox)) originX = ox;
   if (!isNaN(oy)) originY = oy;
-  const fx = localStorage.getItem('axi_flipX');
-  const fy = localStorage.getItem('axi_flipY');
+  const fx = store.get('axi_flipX');
+  const fy = store.get('axi_flipY');
   if (fx !== null) inpFlipX.checked = fx === '1';
   if (fy !== null) inpFlipY.checked = fy === '1';
-  const oe  = localStorage.getItem('axi_optEnabled');
-  const os  = localStorage.getItem('axi_optScale');
-  const lt  = localStorage.getItem('axi_lagThreshold');
-  const ll  = localStorage.getItem('axi_limitLag');
+  const oe  = store.get('axi_optEnabled');
+  const os  = store.get('axi_optScale');
+  const lt  = store.get('axi_lagThreshold');
+  const ll  = store.get('axi_limitLag');
   if (oe !== null) { optEnabled   = oe === '1'; inpOptEn.checked       = optEnabled; }
   if (os !== null) { optScale     = parseFloat(os) || 0.5; inpOptScale.value   = optScale; }
   if (lt !== null) { lagThreshold = parseFloat(lt) || 3.0; inpLagThreshold.value = lagThreshold; }
   if (ll !== null) { limitLag     = ll === '1'; inpLimitLag.checked    = limitLag; }
-  const md = localStorage.getItem('axi_minDist');
+  const md = store.get('axi_minDist');
   if (md !== null) {
     minDist = parseFloat(md) || 0.01;
     inpMinDist.value = minDist;
     document.getElementById('opt-mindist-val').textContent = (minDist * 25.4).toFixed(2) + 'mm';
   }
-  const vp = localStorage.getItem('axi_varPressure');
-  const pu = localStorage.getItem('axi_penPosUp');
-  const pd = localStorage.getItem('axi_penDownMin');
-  const pm = localStorage.getItem('axi_penDownMax');
-  const pr = localStorage.getItem('axi_pressureUpdateRate');
+  const vp = store.get('axi_varPressure');
+  const pu = store.get('axi_penPosUp');
+  const pd = store.get('axi_penDownMin');
+  const pm = store.get('axi_penDownMax');
+  const pr = store.get('axi_pressureUpdateRate');
   if (vp !== null) { varPressure = vp === '1'; inpVarPressure.checked = varPressure; }
   if (pu !== null) { penPosUp   = parseInt(pu) || 60;  inpPenUp.value          = penPosUp;           document.getElementById('pen-up-val').textContent       = penPosUp; }
   if (pd !== null) { penDownMin = parseInt(pd) || 40;  inpPenDownMin.value     = penDownMin;          document.getElementById('pen-down-min-val').textContent = penDownMin; }
   if (pm !== null) { penDownMax = parseInt(pm) || 20;  inpPenDownMax.value     = penDownMax;          document.getElementById('pen-down-max-val').textContent = penDownMax; }
   if (pr !== null) { pressureUpdateRate = parseInt(pr) ?? 100; inpPressureRate.value = pressureUpdateRate; }
-  const xt = localStorage.getItem('axi_xTilt');
-  const yt = localStorage.getItem('axi_yTilt');
+  const xt = store.get('axi_xTilt');
+  const yt = store.get('axi_yTilt');
   if (xt !== null) { xTiltDeg = parseFloat(xt) || 0.0; inpXTilt.value = xTiltDeg; }
   if (yt !== null) { yTiltDeg = parseFloat(yt) || 0.0; inpYTilt.value = yTiltDeg; }
 }
@@ -1054,7 +1036,7 @@ function resetSettings() {
   yTiltDeg = 0.0; inpYTilt.value = 0;
   applyPreviewSize();
   inpOX.value = 0; inpOY.value = 0;
-  _STORAGE_KEYS.forEach(k => localStorage.removeItem(k));
+  _STORAGE_KEYS.forEach(k => store.remove(k));
   updateOptUI();
   updatePenUI();
   if (_ws && _ws.readyState === WebSocket.OPEN) {
@@ -1178,9 +1160,9 @@ function sendEffectsOnly(v) {
   if (_ws && _ws.readyState === WebSocket.OPEN)
     _ws.send(JSON.stringify({ type: 'set_effects_only', enabled: v }));
 }
-fxOnlyCb.checked = localStorage.getItem('axi_fx_only') === '1';
+fxOnlyCb.checked = store.get('axi_fx_only') === '1';
 fxOnlyCb.addEventListener('change', () => {
-  localStorage.setItem('axi_fx_only', fxOnlyCb.checked ? '1' : '0');
+  store.set('axi_fx_only', fxOnlyCb.checked ? '1' : '0');
   sendEffectsOnly(fxOnlyCb.checked);
 });
 
@@ -1196,7 +1178,7 @@ function buildEffectsPanel() {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.id   = 'fx-' + spec.name;
-    const savedEn = localStorage.getItem(fxEnKey(spec.name));
+    const savedEn = store.get(fxEnKey(spec.name));
     st.enabled = savedEn === null ? spec.enabled : savedEn === '1';
     cb.checked = st.enabled;
     const nameSpan = document.createElement('span');
@@ -1209,7 +1191,7 @@ function buildEffectsPanel() {
 
     cb.addEventListener('change', () => {
       st.enabled = cb.checked;
-      localStorage.setItem(fxEnKey(spec.name), cb.checked ? '1' : '0');
+      store.set(fxEnKey(spec.name), cb.checked ? '1' : '0');
       reflect();
       sendEffectEnabled(spec.name, cb.checked);
     });
@@ -1222,7 +1204,7 @@ function buildEffectsPanel() {
       inp.type = 'number';
       inp.id   = 'fxp-' + spec.name + '-' + p.attr;
       inp.min  = p.min; inp.max = p.max; inp.step = p.step;
-      const savedP = localStorage.getItem(fxParamKey(spec.name, p.attr));
+      const savedP = store.get(fxParamKey(spec.name, p.attr));
       const val = savedP === null ? p.default : parseFloat(savedP);
       inp.value = val;
       st.params[p.attr] = val;
@@ -1237,7 +1219,7 @@ function buildEffectsPanel() {
         if (p.int) v = Math.round(v);
         inp.value = v;
         st.params[p.attr] = v;
-        localStorage.setItem(fxParamKey(spec.name, p.attr), v);
+        store.set(fxParamKey(spec.name, p.attr), v);
         sendEffectParam(spec.name, p.attr, v);
       });
     }
@@ -1254,17 +1236,17 @@ function resetEffects() {
     st.enabled = spec.enabled;
     const cb = document.getElementById('fx-' + spec.name);
     if (cb) cb.checked = spec.enabled;
-    localStorage.removeItem(fxEnKey(spec.name));
+    store.remove(fxEnKey(spec.name));
     for (const p of spec.params) {
       st.params[p.attr] = p.default;
       const inp = document.getElementById('fxp-' + spec.name + '-' + p.attr);
       if (inp) inp.value = p.default;
-      localStorage.removeItem(fxParamKey(spec.name, p.attr));
+      store.remove(fxParamKey(spec.name, p.attr));
     }
     st.paramEls.forEach(el => el.classList.toggle('fx-off', !st.enabled));
   }
   fxOnlyCb.checked = false;
-  localStorage.removeItem('axi_fx_only');
+  store.remove('axi_fx_only');
   syncEffects();
 }
 
@@ -1273,6 +1255,32 @@ buildEffectsPanel();
 // ── OSC message handler ───────────────────────────────────────────────────────
 
 function handleMessage(msg) {
+  if (msg.type === 'hello') {
+    const server = msg.settings || {};
+    const local  = localSettings();
+    if (Object.keys(server).length && !sameSettings(server, local)) {
+      // Adopt the computer's settings, and reload so every control is rebuilt
+      // from them. (After the reload they match, so this happens once.)
+      Object.keys(local).forEach(k => localStorage.removeItem(k));
+      for (const [k, v] of Object.entries(server)) localStorage.setItem(k, v);
+      location.reload();
+      return;
+    }
+    if (!Object.keys(server).length && Object.keys(local).length) pushSettingsSoon();
+    syncAllToServer();
+    // Catch up with the drawing so far — on first load, after a reload, or
+    // after reconnecting to a restarted app.
+    clearCanvas();
+    for (const m of msg.drawing || []) handleMessage(m);
+    return;
+  }
+
+  if (msg.type === 'new_drawing') {
+    clearCanvas();
+    flashSaved(msg.saved ? 'saved ' + msg.saved : 'new drawing');
+    return;
+  }
+
   if (msg.type === 'canvas_size') {
     surfaceW = msg.width;
     surfaceH = msg.height;
@@ -1375,6 +1383,11 @@ function handleMessage(msg) {
 
   if (msg.type === 'tool_change') {
     toolLabelEl.textContent = 'tool: ' + msg.tool;
+    return;
+  }
+
+  if (msg.type === 'saved') {
+    flashSaved(msg.ok ? 'saved ' + msg.path : 'save failed');
     return;
   }
 
@@ -1491,10 +1504,19 @@ inpYTilt.addEventListener('change', e => {
 let _ws = null;
 
 function connect() {
-  _ws = new WebSocket('ws://localhost:WS_PORT_PLACEHOLDER');
+  // Same host and port the page came from: one server serves both.
+  _ws = new WebSocket('ws://' + location.host + '/ws');
   _ws.onopen    = () => {
     dot.classList.add('live'); connLabel.textContent = 'live';
-    // Re-sync all settings in case server restarted
+    // Settings and the drawing so far arrive in the server's 'hello'.
+  };
+  _ws.onmessage = (e) => { try { handleMessage(JSON.parse(e.data)); } catch(err) { console.error(err); } };
+  _ws.onclose   = () => { dot.classList.remove('live'); connLabel.textContent = 'reconnecting…'; setTimeout(connect, 1500); };
+}
+
+// Push every setting this page shows to the engine (the effect is the same
+// as the saved settings the engine applied at startup, so this is harmless).
+function syncAllToServer() {
     _ws.send(JSON.stringify({ type: 'set_flip_x',          enabled: inpFlipX.checked }));
     _ws.send(JSON.stringify({ type: 'set_flip_y',          enabled: inpFlipY.checked }));
     _ws.send(JSON.stringify({ type: 'set_opt_enabled',     enabled: optEnabled }));
@@ -1510,13 +1532,11 @@ function connect() {
     _ws.send(JSON.stringify({ type: 'set_x_tilt',               value:   xTiltDeg          }));
     _ws.send(JSON.stringify({ type: 'set_y_tilt',               value:   yTiltDeg          }));
     syncEffects();   // push the post-processing panel's state too
-  };
-  _ws.onmessage = (e) => { try { handleMessage(JSON.parse(e.data)); } catch(err) { console.error(err); } };
-  _ws.onclose   = () => { dot.classList.remove('live'); connLabel.textContent = 'reconnecting…'; setTimeout(connect, 1500); };
 }
 
 // Expose functions used by onclick attributes (module scope is not global)
 window.clearCanvas        = clearCanvas;
+window.newDrawing         = newDrawing;
 window.toggleDownloadMenu = toggleDownloadMenu;
 window.downloadPNG        = downloadPNG;
 window.downloadSVG        = downloadSVG;
@@ -1532,43 +1552,10 @@ connect();
 </script>
 </body>
 </html>
-""".replace("WS_PORT_PLACEHOLDER", WS_PORT_STR) \
-   .replace("EFFECT_SPECS_PLACEHOLDER", json.dumps(postprocess.effect_specs()))
+""".replace("EFFECT_SPECS_PLACEHOLDER", json.dumps(postprocess.effect_specs()))
 
 
-# ─── HTTP server ──────────────────────────────────────────────────────────────
-
-class _HTMLHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(HTML.encode())
-
-    def do_POST(self):
-        if self.path != "/save":
-            self.send_response(404)
-            self.end_headers()
-            return
-        try:
-            length = int(self.headers.get("Content-Length", 0))
-            payload = json.loads(self.rfile.read(length))
-            name = _save_drawing(payload["filename"], payload["b64"])
-            self._send_json(200, {"ok": True, "path": name})
-        except Exception as exc:
-            self._send_json(500, {"ok": False, "error": str(exc)})
-
-    def _send_json(self, code, body):
-        data = json.dumps(body).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def log_message(self, *_):
-        pass
-
+# ─── saving ───────────────────────────────────────────────────────────────────
 
 def _save_drawing(filename: str, b64: str) -> str:
     """
@@ -1589,44 +1576,102 @@ def _save_drawing(filename: str, b64: str) -> str:
 
     with open(os.path.join(SAVE_DIR, name), "wb") as f:
         f.write(base64.b64decode(b64))
-    print(f"[preview] saved  →  {os.path.join(SAVE_DIR, name)}")
+    log.info("[preview] saved  →  %s", os.path.join(SAVE_DIR, name))
     return name
 
 
-# ─── public start function ────────────────────────────────────────────────────
+def _save_reply(msg: dict) -> dict:
+    """Handle the page's save_file message; the reply goes back to that page."""
+    try:
+        name = _save_drawing(str(msg["filename"]), str(msg["b64"]))
+        return {"type": "saved", "ok": True, "path": name}
+    except Exception as exc:   # noqa: BLE001 — reported to the page
+        log.error("[preview] save failed: %s", exc)
+        return {"type": "saved", "ok": False, "error": str(exc)}
 
-def start(open_browser: bool = True):
-    """
-    Starts both the HTTP server and the WebSocket server in background threads.
-    Returns immediately so listen_to_idraw.py can continue.
-    """
-    global _ws_loop
 
-    def _run_ws():
+# ─── one server: the page over HTTP, the live feed over /ws ───────────────────
+
+def _response(status: int, body: bytes, content_type: str) -> Response:
+    headers = Headers([
+        ("Content-Type", content_type),
+        ("Content-Length", str(len(body))),
+        # Never serve a stale page after an update.
+        ("Cache-Control", "no-store"),
+    ])
+    return Response(status, http.HTTPStatus(status).phrase, headers, body)
+
+
+def _process_request(connection, request):
+    """
+    Every request passes through here first. Plain HTTP gets its response here;
+    /ws carries on into the WebSocket handshake, where `origins` checks that the
+    page connecting is ours.
+    """
+    # Blocks DNS rebinding: a web page served from a name that resolves to
+    # 127.0.0.1 would arrive here with that name in its Host header.
+    if request.headers.get("Host") not in (f"127.0.0.1:{port}", f"localhost:{port}"):
+        return _response(403, b"forbidden", "text/plain")
+    path = request.path.split("?", 1)[0]
+    if path == "/ws":
+        return None
+    if path == "/":
+        return _response(200, HTML.encode(), "text/html; charset=utf-8")
+    if path == "/health":
+        body = json.dumps({"app": "pantograph", "pid": os.getpid()}).encode()
+        return _response(200, body, "application/json")
+    return _response(404, b"not found", "text/plain")
+
+
+def start(ports=DEFAULT_PORTS, save_dir=None) -> int:
+    """
+    Start the server on the first free port in `ports`, on a background thread.
+    Returns the port once it's listening. Raises RuntimeError if none is free.
+    """
+    global SAVE_DIR
+    if save_dir is not None:
+        SAVE_DIR = str(save_dir)
+    ports = list(ports)
+    ready = threading.Event()
+
+    async def _open():
+        global port, _server
+        for p in ports:
+            # Browsers always send Origin, and it must be this page. A missing
+            # Origin means another local program (a second launch, the
+            # svg_transform command), which runs as the user anyway.
+            origins = [f"http://127.0.0.1:{p}", f"http://localhost:{p}", None]
+            try:
+                # max_size: an uploaded SVG replay arrives as one frame carrying
+                # every point of a drawing, which easily passes the 1 MB default.
+                _server = await serve(_ws_handler, "127.0.0.1", p, origins=origins,
+                                      process_request=_process_request,
+                                      max_size=64 * 1024 * 1024)
+            except OSError:
+                continue
+            port = p
+            return
+
+    def _run():
         global _ws_loop
         _ws_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(_ws_loop)
+        try:
+            _ws_loop.run_until_complete(_open())
+        finally:
+            ready.set()
+        if _server is not None:
+            _ws_loop.run_forever()
 
-        async def _serve():
-            # max_size: an uploaded SVG replay arrives as one frame carrying every
-            # point of a drawing, which easily passes the 1 MB default.
-            async with websockets.serve(
-                _ws_handler, "localhost", WS_PORT, max_size=64 * 1024 * 1024
-            ):
-                await asyncio.Future()
+    threading.Thread(target=_run, name="preview", daemon=True).start()
+    ready.wait()
+    if port is None:
+        raise RuntimeError(f"no free port for the UI in {ports[0]}–{ports[-1]}")
+    log.info("[preview] http://127.0.0.1:%d  (live feed on /ws)", port)
+    return port
 
-        _ws_loop.run_until_complete(_serve())
 
-    threading.Thread(target=_run_ws, daemon=True).start()
-
-    def _run_http():
-        httpd = HTTPServer(("localhost", HTTP_PORT), _HTMLHandler)
-        httpd.serve_forever()
-
-    threading.Thread(target=_run_http, daemon=True).start()
-
-    if open_browser:
-        threading.Timer(0.8, lambda: webbrowser.open(f"http://localhost:{HTTP_PORT}")).start()
-
-    print(f"[preview] HTTP  →  http://localhost:{HTTP_PORT}")
-    print(f"[preview] WS    →  ws://localhost:{WS_PORT}")
+def stop() -> None:
+    """Stop accepting connections. Safe to call from any thread, or twice."""
+    if _server is not None and _ws_loop is not None:
+        _ws_loop.call_soon_threadsafe(_server.close)

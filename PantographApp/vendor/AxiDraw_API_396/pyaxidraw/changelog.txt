@@ -1,0 +1,646 @@
+AxiDraw API Change Log
+
+This document notes changes that affect the APIs. It does
+not cover all internal changes nor bug fixes.
+
+Please see https://axidraw.com/doc/cli_api/ for current CLI API documentation and
+and https://axidraw.com/doc/py_api/ for current Python API documentation.
+
+Additional release notes about the AxiDraw software in general (not just API changes)
+are at: https://github.com/evil-mad/axidraw/releases
+
+
+
+=========================================
+v 3.9.4 (September 2023)
+
+Pen-lift servo motor initialization routines rewritten for more consistent behavior.
+
+As part of this, the update() function in the Python API now itself applies pen height
+changes. For example, if the pen-up height (pen_pos_up) changes, calling update()
+with the pen up will immediately move to the new pen-up height, rather than at the
+next penup() command.
+
+=========================================
+v 3.9 (May 2023)
+
+New option, hiding, enables hidden-line removal. Default can be set in a configuration file.
+
+New manual commands res_read, res_adj_in, res_adj_mm allow one to offset the
+    pause position on a plot, letting you resume plotting a little bit before
+    (or a little bit after) where the plot was initially paused. You can also
+    use it to configure a plot to start some specified distance through, even
+    if it was not initially paused.
+
+Small gain in initial processing speed of large SVG files, thanks to rewritten
+    SVG path parser.
+
+Python API: New load_config()function, which loads a configuration file.
+
+Python API: New block()function, which waits until all queued motion commands have completed.
+
+Python API: The numeric time report values noted in the description of the
+report_time option are now always populated, even if report_time is not enabled.
+
+=========================================
+v 3.8 (January 2023)
+
+Significant performance improvements for initial processing of large SVG files
+    before plotting. Also speed gains in res_home mode, and in time between plots
+    when plotting multiple copies.
+
+CLI progress bar now shows progress as *mm travel* (rather than an overall "node" count).
+
+Added new penlift option, to enable brushless servo option.
+
+Changed walk_dist option in configuration file and Python/CLI APIs to dist.
+- The old option name walk_dist is now deprecated, but still functional in
+    config files and python scripts that specify walk_dist but not dist.
+
+Added new "button_interval" parameter; specifies interval for polling pause button
+
+Added 6 new parameters in configuration file to support new brushless servo option.
+
+Supersampling to smooth paths with overly-high vertex density is now dramatically faster
+    and now happens *after* path joining. Supersampling tolerance is now slightly higher.
+
+Archive release at:
+https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_381.zip
+
+=========================================
+v 3.7.2 (November 2022)
+
+Refine Python API error handling.
+- Add four new variables to configure which error conditions raise a RuntimeError.
+- Add error code to detail error type
+- Raise RuntimeError (rather than sys.exit) on failure to load SVG files.
+
+Plots run via the Python API can now be paused by a keyboard interrupt,
+if the new keyboard_pause variable is enabled
+
+The "fw_version_string" variable in the Python API is now populated by plot_run(),
+in every mode, not just by the fw_version manual_cmd.
+
+The "bezier_segmentation_tolerance" and "smoothness" parameters have been removed
+from the configuration file, and replaced with a new "curve_tolerance" parameter
+in physical units. (No change to behavior.)
+
+Add support for Python 3.11. Python 3.7 - 3.11 are now supported.
+
+Archive release at:
+https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_372.zip
+
+=========================================
+
+v 3.6 (October 2022)
+
+Python interactive API: Added new "delay" function, which adds a
+hardware-timed delay.
+
+AxiCLI now returns a non-zero exit code on keyboard or pause button interrupt
+while plotting (but not during delays between multiple pages), as well as on
+certain errors, such as a failure to connect over USB.
+
+Python Interactive API will now raise a RuntimeError on movement commands when no
+USB connection is active.
+
+Defaults for mode, manual_cmd, and walk_dist can now be set inside the configuration file.
+
+Renamed Python example script low-level_usb.py -> low_level_usb.py
+
+Archive release at:
+https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_360.zip
+
+=========================================
+
+v 3.5 (July 2022)
+
+Added a new setup mode, cycle, to assist with setting pen height.
+Available in both the AxiDraw CLI and the plot context of the Python API.
+
+Python interactive API: Added new "draw_path" function that draws a vertex list.
+Added two new example scripts, turtle_pos.py and interactive_draw_path.py.
+
+CLI API: Add an option, --progress, to display a progress bar while plotting.
+
+Added configuration file option, servo_pin, for re-assigning the pen-lift
+servo digital output to a different output pin on the EBB control board.
+
+Changes were made to the internal structure of the Python API that may break
+integrations using undocumented (private) API imports, variables, and methods. 
+
+Archive release at:
+https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_350.zip
+
+=========================================
+
+v 3.4 (July 2022)
+
+Added a new "strict" value to reordering that disables all optimizations including
+path joining. Changed description (but not behavior) of the other values for clarity.
+
+New parameters in the axidraw_conf.py configuration file: preview_color_up and preview_color_down
+allow one to set the colors used in preview rendering.
+
+Archive release at:
+https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_341.zip
+
+=========================================
+
+v 3.3 (June 2022)
+
+Expand model option values with AxiDraw V3/B6.
+
+Archived release at:
+https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_330.zip
+
+=========================================
+
+v 3.2.1 (February 2022) 
+
+Bugfix release.
+
+Add two new python example files.
+
+Archived release at:
+https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_321.zip
+
+=========================================
+
+v 3.2 (February 2022)
+
+Expand model option values with AxiDraw SE/A1, SE/A2.
+
+Improved model for time duration of raising/lowering pen-lift servo motor;
+two adjustable parameters added to the configuration file.
+
+New walk_home command added to the list of manual commands.
+
+Plots underway can now be paused with Control+C in addition to the physical pause button.
+
+Archived release at:
+https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_320.zip
+
+=========================================
+
+v 3.1 (January 2022)
+
+New plot digest feature: The digest option can enable saving a plot digest,
+rather than the full SVG output
+
+New Webhook notifications feature. Added webhook and webhook_url options.
+
+New parameter in the axidraw_conf.py configuration file: report_lifts enables
+reporting the number of pen lifts in a plot.
+
+Archived release at:
+https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_310r1.zip
+
+=========================================
+
+v 3.0 (October 2021)
+
+Significant changes to plot optimization: 
+* Improved plot automatic path joining.
+* New sub-path optimization: All sub-paths on a layer will now be re-ordered for
+    speed (if enabled), rather than whole paths.
+* Dropped reordering options for preserving groups and optimizing within groups.
+* New optional path reversal during optimization.
+* New option to randomize start position of closed paths
+
+These new features are only available as part of a plot, not in "reorder" mode.
+Reorder mode is now deprecated, and will be removed in a future version.
+
+Breaking changes:
+
+* The ebb_version option, previously deprecated, has been removed.
+
+* The values and behavior of the reordering option have changed.
+  Previous values:
+    0: No reordering (Default)
+    1: Reorder but preserve groups
+    2: Reorder within groups
+    3: Break apart groups
+
+  New values:
+    0: Preserve order of objects given in SVG file (Default).
+    1: Reorder objects, preserving path orientation
+    2: Reorder objects, allow path reversal
+    3: [Deprecated]
+
+  A value of 3 will behave identically to 2 for compatibility for the time being,
+  however this option value is now deprecated.
+
+Archived release at:
+https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_302r1.zip
+
+=========================================
+
+v 2.7.5 (August 2021)
+
+Add support for Python 3.10; Python 3.6-3.10 are now supported.
+
+
+Improved handling of Interactive-context movements beyond travel bounds.
+
+By default, whenever the "turtle" (theoretical XY) position is outside
+of the travel limits, (1) the physical XY position is clipped to remain within
+those limits, and (2) the pen is in kept in the pen-up state.
+While both have always been the case in in the Plot context,
+both are now true in the Interactive context as well. 
+
+(Previously, Interactive context motion was clipped, but the pen state was not
+automatically raised when the motion was clipped.)
+
+As part of this change:
+
+* Interactive-context pen-down moves that begin and/or end outside of the bounds
+are now linked by automatic pen-up moves, giving more consistent and predictable
+behavior.
+* The pendown() function, by default, no longer lowers the pen when
+the turtle position is outside of the plotting bounds.
+* New current_pen() and turtle_pen() query functions.
+* New parameter in the axidraw_conf.py configuration file: auto_clip_lift, which
+can disable automatic pen lifts at plotting bounds and the new behavior of pendown.
+
+Archived release at:
+https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_275r2.zip
+
+=========================================
+
+v 2.7.4 (June 2021)
+
+Drop support for Python 3.5. Python 3.6 or newer is now required.
+
+Results returned by the "usb_query" function in the Python API are
+now stripped of whitespace; previously, they were not.
+
+Archived release at:
+https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_274r1.zip
+
+=========================================
+
+v 2.7.0 (November 2020)
+
+Add support for macOS 11 (Big Sur) and Mac computers using Apple Silicon
+
+Drop support for Python 2. Python 3.5-3.9 now supported. If you need
+to use Python 2, the previous release version (2.6.3) is archived below.
+
+Archived release [here](https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_270r13.zip)
+
+=========================================
+
+v 2.6.3 (August 2020)
+
+Add new turtle_pos and current_pos functions.
+
+Several new example scripts added for Python API, along with a section
+in this documentation listing what the different example scripts do.
+
+This is the last point release of the software supporting Python 2, and is
+archived for download at:
+https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_263_r2.zip
+
+You can also install it via:
+pip install https://cdn.evilmadscientist.com/dl/ad/public/ad_api/AxiDraw_API_263_r2.zip
+
+=========================================
+
+v 2.6.0 (July 2020)
+
+Last major release to support both Python 2 and Python 3.
+Future releases starting with 2.7.0 will require Python 3.5+.
+
+Add "one line" installation instructions.
+
+Add usb_command and usb_query functions in Python interactive context.
+
+Add walk_mmx and walk_mmy parameters, for manual walk in millimeter units.
+
+Add mm units for interactive moves in Python API, in addition to cm, inch units.
+
+Add direct access to additional parameters, using new "params" syntax.
+
+Renamed ebb_version to fw_version. The deprecated manual command
+name (ebb_version) is still functional but will be removed
+in a future version.
+
+Certain operations that print output now also populate Python variables:
+"version" mode, "fw_version" manual command, "report_time" option.
+
+New parameters are available in the axidraw_conf.py configuration
+file: servo_timeout and use_b3_out
+
+=========================================
+
+v 2.5.x -- 2020-01-02
+
+Deprecated a value for port_config.
+
+list_names populates an accessible Python variable in the python API.
+
+v 2.5.6 -- 2019-12-13
+
+Add support for new AxiDraw MiniKit model
+
+v 2.5.x -- 2019-09-04
+
+Corrected an error in this documentation. The four reordering
+parameter values are in the range 0-3, not 1-4.
+
+=========================================
+
+v 2.5.0 (May 2019)
+
+Added option (-f, --config) for local configuration file.
+
+Renamed "group_sorting" option to "reordering", (-G, --reordering) and
+changed parameter values.  Reordering is now available directly in
+the plotting modes, which allows full previews to be rendered.
+
+Reordering is also now possible within the python library
+when using the plot context.
+
+Removed the (old, limited) preview options from reorder mode.
+
+
+Changed names of some parameters in axidraw_conf.py. 
+
+=========================================
+
+v 2.4.0 (April 2019)
+
+Changed names of some parameters in axidraw_conf.py. 
+
+Refactoring of CLI and python interfaces. CLI is now
+accessible system-wide and called as "axicli" directly
+rather than as "python axicli.py".
+
+Inkscape-based dependencies moved out of this project,
+to a separately maintained project (available on pypi):
+https://github.com/evil-mad/ink_extensions
+
+=========================================
+
+v 2.3.2 (January 2019)
+
+CLI no longer requires input files for the "utility" modes 
+align, toggle, sysinfo, or manual.  An input file is still
+required whenever an output file is specified.
+
+Python library now accepts plot_setup() with no arguments, which
+may be helpful for using those same utility modes in some
+circumstances.
+
+=========================================
+
+v 2.3.1 (December 2018)
+
+All types of viewboxes should be handled now.
+
+Significant improvements to clipping.
+
+=========================================
+
+v. 2.3.0 (December 2018)
+
+Remove pyserial from distribution. It now needs to be installed on your
+system in order to run this software. Remove axidraw_legacy.inx
+
+25% increase in maximum XY speed now allowed.
+
+Change installation process to allow installation via pip.
+
+=========================================
+
+v. 2.2.0 (September 2018)
+
+The sysinfo mode now checks for updates. This behavior can be turned off
+by editing the value of "check_updates" in the axidraw_conf.py file. 
+
+Added axidraw_svg_reorder extension, and interface to use it from
+within the CLI. It is not yet accessible from within the python API.
+
+Added mode: reorder
+
+Added new option group_sorting (-G), to select how groups are handled
+when sorting the SVG file.
+
+=========================================
+
+v. 2.1.1 (August 2018)
+
+Plots (CLI or Python API in Plot context) are now clipped at the
+edges of the SVG document.
+
+=========================================
+
+v. 2.1.0 (August 2018)
+
+Previous versions of the AxiDraw software truncated XY moves at the extents
+of travel, such that a move to (-1,1) would instead go to (0,1).
+
+Paths are now clipped with pen-up at the edges of machine travel.
+This applies to both paths in SVG documents and individual moves in
+XY interactive mode.
+
+=========================================
+
+v. 2.0 (July 2018)
+Significant changes to options, names, and syntax, for clarity and
+compatibility moving forward.
+
+Summary:
+
+* Changed command line argument format
+* Changed four mode+option combinations to be separate modes
+* Removed some redundant and/or infrequently-adjusted arguments
+* Changed names of most arguments for clarity and consistency
+* Updated default value parameter names in axidraw_conf.py to match
+* Added short names for arguments
+* Output file name now specified by option argument, rather than by position
+* Added new argument: "port_config"
+* All boolean input arguments have been changed to input flags. That is,
+    instead of using  syntax like "--reportTime=True", one now uses
+    "--report_time" or simply "-T"
+* Removed parameter "autoRotate" (default True) in favor of new optional boolean
+    (flag) argument, "no_rotate" (default False)
+* Changed pen-lifting and pen-lowering speed parameters to be a relative
+ percentage (1-100% of speed), rather than an open-ended input.
+* Default value of rendering is now 3 (full rendering, not none).
+* Added interactive mode for direct XY control with moveto/lineto type commands
+* Moved documentation from included text files to online.
+    CLI: https://axidraw.com/doc/cli_api/
+    Python API: https://axidraw.com/doc/py_api
+
+
+== Changes to command line argument format: ==
+
+Input file is now a positional argument; the first argument.
+Output file is now specified with an explicit argument, rather than by position.
+
+The input parser is now more flexible about the format of its arguments.
+
+The following are examples of valid command line arguments:
+
+python axicli.py filename.svg -m version
+python axicli.py filename.svg -m=version
+python axicli.py filename.svg -m="version"
+python axicli.py filename.svg --mode version
+python axicli.py filename.svg --mode=version
+python axicli.py filename.svg --mode="version" 
+
+python axicli.py filename.svg -T
+python axicli.py filename.svg --report_time
+
+python axicli.py filename.svg -C -T
+
+
+Single-character commands (like -m or -C) may be lumped together, and may have their arguments
+follow directly without a space.
+
+python axicli.py filename.svg -CT
+python axicli.py filename.svg -R5 
+python axicli.py filename.svg -mversion
+python axicli.py filename.svg -mlayers -CTl2  
+
+
+== Changes to modes: ==
+
+Removed mode "setup", in favor of specifying its two options as modes.
+Removed mode "resume", in favor of specifying its two options as modes.
+
+Added four new modes, to replace the two removed modes with their options:
+    -m align:       Replaces --mode=setup --setupType=align-mode
+    -m toggle:      Replaces --mode=setup --setupType=toggle-pen
+    -m res_plot: Replaces --mode=resume --resumeType=ResumeNow
+    -m res_home: Replaces --mode=resume --resumeType=justGoHome
+
+
+== arguments removed: ==
+
+Removed argument "smoothness".    (Still adjustable in axidraw_conf.py)
+Removed argument "cornering".     (Still adjustable in axidraw_conf.py)
+Removed argument "resolution".    (Still adjustable in axidraw_conf.py)
+Removed argument "copiesOfLayer". (Use the main "copies" argument, now)
+Removed argument "setupType".     (Replaced by new modes added.)
+Removed argument "resumeType".    (Replaced by new modes added.)
+Removed argument "autoRotate".    (Replaced by new argument, "no_rotate".)
+
+
+== Renamed arguments and values: ==
+
+Renamed argument "manualType" to "manual_cmd"
+Renamed argument "WalkDistance" to "walk_dist"
+Renamed argument "layerNumber" to "layer"
+Renamed argument "penDownSpeed" to "speed_pendown"
+Renamed argument "penUpSpeed" to "speed_penup"
+Renamed argument "accelFactor" to "accel"
+
+Renamed argument "penUpPosition" to "pen_pos_up"
+Renamed argument "penDownPosition" to "pen_pos_down"
+Renamed argument "penLiftRate" to "pen_rate_raise"
+Renamed argument "penLowerRate" to "pen_rate_lower"
+Renamed argument "penLiftDelay" to "pen_delay_up"
+Renamed argument "penLowerDelay" to "pen_delay_down"
+
+Renamed argument "constSpeed" to "const_speed"
+Renamed argument "reportTime" to "report_time"
+Renamed argument "previewType" to "rendering"
+Renamed argument "previewOnly" to "preview"
+
+Renamed argument "copiesOfDocument" to "copies"
+Renamed argument "copyDelay" to "page_delay"
+
+
+Renamed manual-mode command "version" to "ebb_version"
+Renamed manual-mode command "raise-pen" to "raise_pen"
+Renamed manual-mode command "lower-pen" to "lower_pen"
+Renamed manual-mode command "walk-x-motor" to "walk_x"
+Renamed manual-mode command "walk-y-motor" to "walk_y"
+Renamed manual-mode command "enable-motors" to "enable_xy" 
+Renamed manual-mode command "disable-motors" to "disable_xy" 
+Renamed manual-mode command "strip-data" to "strip_data"
+Renamed manual-mode command "read-name" to "read_name"
+Renamed manual-mode command "write-name" to "write_name"
+
+
+== Added arguments: ==
+
+Added new argument "port_config".
+Added new argument "no_rotate".
+Added new argument "output_file".
+
+Added manual-mode command "list_names"
+
+
+== Added short names for arguments: ==
+
+added "-m", for "--mode"
+added "-s", for "--speed_pendown"
+added "-S", for "--speed_penup"
+added "-a", for "--accel"
+added "-u", for "--pen_pos_up"
+added "-d", for "--pen_pos_down"
+added "-R", for "--pen_rate_raise"
+added "-r", for "--pen_rate_lower"
+added "-y", for "--pen_delay_up"
+added "-z", for "--pen_delay_down"
+added "-N", for "--no_rotate"
+added "-C", for "--const_speed"
+added "-T", for "--report_time"
+added "-M", for "--manual_cmd"
+added "-w", for "--walk_dist"
+added "-l", for "--layer"
+added "-c", for "--copies"
+added "-D", for "--page_delay"
+added "-v", for "--preview"
+added "-g", for "--rendering"
+added "-L", for "--model"
+added "-p", for "--port"
+added "-P", for "--port_config"
+added "-o", for "--output_file"
+
+
+
+== Changes to default arguments in axidraw_conf.py: == 
+
+Renamed argument "accelFactor" to "accel"
+Renamed argument "DefaultLayer" to "default_Layer"
+Renamed argument "PenUpSpeed" to "speed_penup"
+Renamed argument "PenDownSpeed" to "speed_pendown"
+Renamed argument "penUpPosition" to "pen_pos_up"
+Renamed argument "penDownPosition" to "pen_pos_down"
+Renamed argument "penLiftRate" to "pen_rate_raise"
+Renamed argument "penLowerRate" to "pen_rate_lower"
+Renamed argument "penLiftDelay" to "pen_delay_up"
+Renamed argument "penLowerDelay" to "pen_delay_down"
+Renamed argument "constSpeed" to "const_speed"
+Renamed argument "reportTime" to "report_time"
+Renamed argument "previewType" to "rendering"
+Renamed argument "copiesOfDocument" to "copies"
+Renamed argument "copyDelay" to "page_delay"
+
+Removed argument "autoRotate"
+
+Added argument "no_rotate" 
+
+Default value of rendering parameter is now 3 (not 0).
+
+
+=========================================
+
+v 1.8.0 (AxiDraw Standalone Beta build 32):
+The version syntax has been revised. Use --mode=manual --manualType=fwversion to
+query the EBB firmware version and other system information.
+aximulti.py removed.
+ 
+=========================================
+
+v 1.6.5 (AxiDraw Standalone Beta build 22):
+The --fileOutput option was removed in favor of being able to directly specify
+the output file name on the command line argument.
+
+
+~~~ Copyright 2023 Windell H. Oskay, Evil Mad Scientist Laboratories ~~~

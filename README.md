@@ -10,7 +10,7 @@ name shows up throughout the code and the rest of this document.)*
 ```
 Apple Pencil → iPad (iDraw OSC) → Wi-Fi/UDP → Python → AxiDraw
                                        │
-                                       └──→ browser preview (localhost:5000)
+                                       └──→ browser preview (127.0.0.1:5810)
 ```
 
 Points are streamed to the plotter as they arrive — the pen starts moving
@@ -172,16 +172,14 @@ per [axidraw.com/doc/py_api](https://axidraw.com/doc/py_api/).
 First, make sure that your terminal is in the correct folder. If you aren't,
 refer to step 3 for how to get there.
 
-**With an AxiDraw:** in the terminal, run:
+In the terminal, run:
 ```
 python listen_to_idraw.py
 ```
-**No AxiDraw:** in the terminal, run:
-```
-python iDraw_to_svg/listen_to_idraw_remote.py
-```
+The same program works with or without an AxiDraw: it looks for one on USB,
+and without one it's a live preview that records your drawing.
 
-Either way, a browser tab opens automatically at http://localhost:5000 —
+Either way, a browser tab opens automatically at http://127.0.0.1:5810 —
 that's your live preview.
 
 ### 8. Connect iDraw OSC to it
@@ -239,27 +237,27 @@ yet. See step 10 for what to do with the drawing.
 **With an AxiDraw:**
 - **settings** (☰, top left) — flip/tilt the output, pen up/down positions,
   variable pressure, path optimization, home the AxiDraw. Full reference:
-  [Browser controls](#browser-controls-localhost5000) below.
+  [Browser controls](#browser-controls-1270015810) below.
 - **effects** (✦, top right) — turn on postprocessing effects like zigzag or
   hatching. Full reference: [Post-processing effects](#post-processing-effects)
   below.
-- **download** — save the current drawing as PNG or SVG, written to
-  `saved_drawings/`.
+- **download** — save the current drawing as PNG or SVG, written to your
+  drawings folder, `Documents/Pantograph/`. The drawing is also autosaved
+  there while you draw, and saved automatically when you quit or press
+  **new drawing**, so reloading or closing the browser tab loses nothing.
 - **Ctrl+C** in the terminal lifts the pen and disengages the XY motors so
   the carriage can be pushed home by hand.
 
 **No AxiDraw:**
-- No settings or effects panel — there's no plotter or postprocessing to
-  configure in this mode.
-- **download → svg** is the point of this mode: it saves a plottable SVG to
-  `iDraw_to_svg/saved_drawings/`. Take that file to a computer with an
-  AxiDraw set up and load it there with the full version's **plot svg**
-  button to plot it asynchronously — with whatever paper size, effects, and
-  settings you choose at that time.
+- Everything above works except moving a plotter: the drawing is recorded and
+  saved to `Documents/Pantograph/` just the same.
+- **download → svg** saves a plottable SVG. Take it to a computer with an
+  AxiDraw and load it there with **plot svg** to plot it later, with
+  whatever paper size, effects and settings you choose at that time.
 
 ### Other programs, and going deeper
 
-That's setup for both programs. The rest of this README is technical
+That's setup. The rest of this README is technical
 reference:
 
 - **[Files](#files)** — what every file in the repo does
@@ -269,8 +267,6 @@ reference:
   panel in depth, and how to write your own
 - **[Offline tools](#offline-tools)** — `svg_transform.py`, `dot_healer.py`,
   and other one-off scripts you run by hand on a finished SVG
-- **[iDraw_to_svg internals](#idraw_to_svg-no-axidraw-internals)** —
-  technical notes on the no-AxiDraw run, for anyone maintaining it
 
 ---
 
@@ -288,8 +284,10 @@ need.)*
 | `postprocess.py` | Post-processing effects — transforms over the plot command stream. Add new effects here. |
 | `svg_transform.py` | Offline GUI (tkinter): flip / filter an exported SVG, write a new one. |
 | `dot_healer.py` | Offline CLI: rejoin strokes that a fast pen tore into a trail of dots. |
-| `iDraw_to_svg/` | Standalone no-AxiDraw version — record now, plot later. See `iDraw_to_svg/README.md`. |
-| `saved_drawings/` | Where preview downloads land (PNG/SVG), written by the server, not the browser. |
+| `saved_drawings/` | Example drawings, kept for documentation and as test data. The app saves to `Documents/Pantograph/` instead. |
+| `recording.py` | The drawing-recording format: records the live session, reads and writes plot SVGs. |
+| `PantographApp/` | App-specific code (settings, data folders, startup/shutdown) and the build guide. |
+| `tests/` | `uv run pytest`: the recording format, stroke handling, and the whole app end to end. |
 | `AGENTS.md` | Project background and the iDraw OSC message reference. |
 | `MEETINGS.html` | Meeting history. |
 
@@ -390,7 +388,7 @@ read on the machine rather than the internal landscape naming.
 
 ---
 
-## Browser controls (localhost:5000)
+## Browser controls (127.0.0.1:5810)
 
 **Canvas** — four stacked layers in one fixed colour scheme: raw OSC input
 (grey), the in-progress stroke (transient overlay), the optimized centerline the
@@ -402,8 +400,9 @@ plotter, so the gap between grey and white *is* the thinning.
 x/y tilt, pen up / min pen down / max pen down servo positions (each with a
 *test* button that moves the pen there), variable pressure + update rate,
 optimizer enable / aggressiveness / min point distance / lag threshold / limit
-lag, live lag readout, home AxiDraw, reset to defaults. Settings persist in
-`localStorage`.
+lag, live lag readout, home AxiDraw, reset to defaults. Settings are saved on
+the computer (`settings.json` in the per-user config folder) and apply at
+startup, even before a browser is open.
 
 **effects** — one block per registered effect, built automatically from
 `postprocess.effect_specs()`, with a live slider per tunable knob. Changing a
@@ -412,7 +411,11 @@ effects add and drops the base centerline — for re-running a finished drawing
 over a base layer already on the paper.
 
 **download** — pick which layers to include, then PNG or SVG. Files are written
-by the server into `saved_drawings/`.
+into the drawings folder, `Documents/Pantograph/`. SVGs are built on the
+computer from its recording of the session: white paper, strokes in greyscale.
+
+**new drawing** — saves the current drawing (as `drawing-<date>_<time>.svg`)
+and starts a fresh one, on every open tab.
 
 **plot svg** — load an exported SVG and replay it.
 
@@ -458,10 +461,12 @@ different post-processors switched on. Idle gaps are shortened to
 `REPLAY_MAX_GAP_SEC` so a drawing with long pauses doesn't take its original
 wall-clock time.
 
-Readers/writers of this format: `preview.py` (`buildRecording`, `uploadSVG`),
-`listen_to_idraw.py` (`_replay_recording`), `svg_transform.py`,
-`dot_healer.py`, and both files in `iDraw_to_svg/`. **Change one, change all
-of them.**
+`recording.py` is the one implementation of this format: it records the live
+session (from the same messages the page receives), reads plot SVGs and writes
+them; `svg_transform.py` and `dot_healer.py` use it. The other readers are
+`listen_to_idraw.py` (`_replay_recording`) and `preview.py`'s `uploadSVG` (which
+only pulls the recording out of a file to send it for replay).
+Keep them in step.
 
 ---
 
@@ -484,17 +489,6 @@ python dot_healer.py drawing.svg --max-gap 20 --dry-run
 (the timeout fired *between* consecutive points): it finds `line, dots…, line`
 runs and concatenates them back into one continuous stroke, with guards so
 deliberate tap-dots are left alone.
-
----
-
-## iDraw_to_svg (no-AxiDraw) internals
-
-What it is and how to run it: the **No AxiDraw** notes in [Setup](#setup)
-above.
-
-- Only needs `python-osc` and `websockets` — no `rdp`, `numpy`, or `pyaxidraw`.
-- Its recording output must stay byte-compatible with what the full version
-  reads back — see the sync warning in `iDraw_to_svg/README.md`.
 
 ---
 

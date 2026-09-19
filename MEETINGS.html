@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Project Pantograph — Meeting Log</title>
+<title>Project Pantograph — Meeting Log &amp; Changelog</title>
 <style>
   :root{
     --bg:#f6f7f9; --panel:#ffffff; --ink:#1c2530; --muted:#5c6773;
@@ -70,6 +70,14 @@
   }
   .entry.ghost::before{background:var(--muted);opacity:.5}
 
+  /* A new era of the log, e.g. the app build */
+  .era{position:relative;margin:44px 0 26px}
+  .era span{
+    display:inline-block;font-size:12px;font-weight:700;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--accent);
+  }
+  .era p{margin:6px 0 0;color:var(--muted);font-size:.95rem;max-width:62ch}
+
   .card{
     background:var(--panel);border:1px solid var(--line);border-radius:12px;
     padding:20px 22px;box-shadow:var(--shadow);
@@ -114,8 +122,8 @@
 
   <header class="masthead">
     <p class="kicker">Project Pantograph · draw2axi</p>
-    <h1>Meeting Log</h1>
-    <p class="lede">A dated, meeting-by-meeting record of how the project has developed — a narrative of what we were trying to do and why, not just a code changelog. Technical detail lives in <a href="AGENTS.md">AGENTS.md</a>; this is the story around it.</p>
+    <h1>Meeting Log &amp; Changelog</h1>
+    <p class="lede">A dated record of how the project has developed — a narrative of what we were trying to do and why, not just a code changelog. It began as a meeting-by-meeting log; since September 18, 2026 it is also the <strong>general changelog</strong>, with an entry per work session on the Pantograph app and anything else. Technical detail lives in <a href="AGENTS.md">AGENTS.md</a> and <a href="PantographApp/BUILD_GUIDE.md">the app's build guide</a>; this is the story around it.</p>
 
     <div class="facts">
       <p><span class="label">In one line:</span> an artist draws on an iPad with an Apple Pencil and an AxiDraw pen plotter physically recreates the drawing, live, on paper — a "collaborative drawing machine" where the human leads and the machine follows.</p>
@@ -342,6 +350,29 @@
       </div>
     </div>
 
+    <div class="era">
+      <span>The Pantograph app · from September 18, 2026</span>
+      <p>Turning the pipeline into one downloadable app that anyone can install and run, with or without an AxiDraw. From here on, entries are work sessions rather than meetings.</p>
+    </div>
+
+    <!-- Work session: app planning + stroke boundaries + app groundwork -->
+    <div class="entry">
+      <div class="card">
+        <span class="badge">Work session</span>
+        <span class="date">September 18, 2026</span>
+        <h2>Planning the app + strokes split by iDraw itself</h2>
+        <p class="session">One long session, running past midnight into the 19th.</p>
+        <p>Decided how Pantograph becomes a <strong>downloadable app</strong> — a public demo rather than a product — and fixed the oldest weakness in the pipeline: guessing where strokes end.</p>
+        <ul>
+          <li><strong>The plan:</strong> a one-line install command (or a zip to double-click) that sets up Python by itself and opens the app in the browser, on Windows and Mac; a native window can come later. Written up as <code>PantographApp/BUILD_GUIDE.md</code>. The code is now MIT-licensed.</li>
+          <li><strong>Strokes split by iDraw, not by timing.</strong> iDraw sends a block of settings before every stroke, so that now marks the new stroke instead of a 0.15&nbsp;s gap — fast strokes no longer tear into dots. A pause just lifts the pen, which carries on the line if you keep drawing. Confirmed on the plotter.</li>
+          <li><strong>Finger strokes plot</strong> (at half pressure) instead of silently vanishing — the drop was a side effect of June's pressure-glitch filter. A fix for pressure lagging one point is written but waits for a Pencil to test with.</li>
+          <li><strong>App groundwork:</strong> pinned dependencies, an automated test suite, a clean shutdown that always lifts the pen, a plotter status with reconnect, one secure port for the page, and the drawing recorded on the computer with autosave — closing the tab or a crash no longer loses work. The separate no-AxiDraw version was folded in and removed.</li>
+          <li>Found that August's replay-doubling fix never actually sent its "replay" tag; now it does.</li>
+        </ul>
+      </div>
+    </div>
+
   </div><!-- /timeline -->
 
   <section class="status">
@@ -351,10 +382,11 @@
       <li>Pressure-driven pen depth, tilt/flip calibration, and a percentage-based update throttle for stutter are all in.</li>
       <li>A post-processing framework (<code>postprocess.py</code>) exists with perpendicular pressure lines, mirror, and centerline-width-from-pressure effects, plus SVG upload/replay and terminal-log reconstruction.</li>
       <li>Standalone offline tools sit alongside the live pipeline, each rewriting the recording and regenerating visuals from it: <code>svg_transform.py</code> (GUI — flip H/V, filter by min width) and <code>dot_healer.py</code> (rejoin strokes a fast pen tore into a trail of dots).</li>
-      <li>A no-AxiDraw version (<code>iDraw_to_svg/</code>, originally <code>remote/</code>) records drawings to plottable SVGs for plotting later on the real machine — its recording output must stay in sync with the full version.</li>
+      <li>The same program now runs without an AxiDraw (the separate <code>iDraw_to_svg/</code> version was removed on September 18): it records drawings to plottable SVGs for plotting later.</li>
+      <li><strong>The Pantograph app is being built</strong> (see <a href="PantographApp/BUILD_GUIDE.md">the build guide</a>): the engine, server and recording groundwork are done; the new UI, installers and release are next.</li>
       <li>Both replay bugs are <strong>fixed</strong> — the mid-plot stop (thread race) and the double-plot re-record.</li>
       <li><strong>Demoed live on video:</strong> Gina drawing while the AxiDraw concurrently recreated the drawing on paper.</li>
-      <li><span class="open"><strong>Known open items:</strong></span> preview rendering quality (smoothing) remains a longer-term want from the early plan.</li>
+      <li><span class="open"><strong>Known open items:</strong></span> a hardware check of the September 18 changes (listed in the build guide); the pressure-lag fix, waiting on a Pencil; preview rendering quality (smoothing) remains a longer-term want from the early plan.</li>
     </ul>
   </section>
 

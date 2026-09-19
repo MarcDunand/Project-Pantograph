@@ -1,2 +1,18 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Launchers and installers need specific line endings on every checkout and in
+# the release zip: cmd misreads .bat files with LF endings, and bash rejects
+# scripts with CRLF endings.
+*.bat      text eol=crlf
+*.ps1      text eol=crlf
+*.command  text eol=lf
+*.sh       text eol=lf
+*.zip      binary
+
+# Left out of the release zip (git archive): dev-only or bulky.
+tests/                  export-ignore
+.github/                export-ignore
+.claude/                export-ignore
+saved_drawings/         export-ignore
+PantographApp/deferred/ export-ignore

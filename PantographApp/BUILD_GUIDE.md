@@ -7,9 +7,46 @@ phase ends with a checkpoint, and nothing moves on until that checkpoint passes.
 **Keep this file current as work lands:** tick boxes, record decisions, add
 gotchas.
 
-**Status:** Phase −1 is done and confirmed on hardware (2026-09-19). **Phase 0
-is next.** The pressure-lag fix is deferred until an Apple Pencil is available
-(see Phase −1).
+**Status:** Phases −1 to 4 are done (2026-09-19), apart from checks that
+need the real AxiDraw (listed just below). **Phase 5 (the UI) is next.** The
+pressure-lag fix is deferred until an Apple Pencil is available (see
+Phase −1).
+
+**Hardware checks.** These can't be verified without the iPad and AxiDraw.
+Marc's session on 2026-09-19 covered the first five:
+- [x] Phase 1: plotting live behaves exactly as before (strokes, pen tests,
+      Home, replay, effects).
+- [x] Phase 1: unplugging the AxiDraw's USB mid-plot shows an error instead of
+      freezing, and the app keeps running.
+- [x] Phase 1: with the AxiDraw unplugged at startup, the console reports
+      `not_found`.
+- [x] Phase 3: plotting a saved SVG ("plot svg") plots it once, not twice.
+- [ ] **Phase 1, re-check after a fix:** closing the console window mid-plot
+      lifts the pen **and releases the motors** (the carriage can be pushed by
+      hand). **Restart the app first**, so it runs the fixed code. (Marc's
+      second try at 01:47 ran an app started at 01:40, before the fix was
+      saved at 01:42.)
+  - **09-19 result:** the pen lifted but the motors stayed engaged, twice.
+  - **Real cause, pre-existing since before the app work:** the shutdown
+    code disengaged the motors by running pyaxidraw in mode `"res_home2"`,
+    **a mode pyaxidraw doesn't have**. It did nothing, and the program then
+    logged "XY motors disengaged" anyway. Every shutdown in the log says so,
+    yet the motors stayed on. Confirmed on the AxiDraw by reading the
+    controller's motor-enable pins (`plotink.ebb_motion.query_enable_motors`):
+    `(1, 1)` before and after a `res_home2` run.
+  - **Fix (`_make_axidraw_safe`):** pen up → `ad.block()` →
+    `ebb_motion.sendDisableMotors(port)` on the already-open connection. The
+    fallback is a fresh connection running pyaxidraw's real manual
+    `disable_xy` command. `shutdown()` also now makes the machine safe
+    *first* and saves/closes after, because a closing Windows console only
+    gets a few seconds.
+  - **Verified on the AxiDraw** (quit path): motors `(1, 1)` → app quits →
+    `(0, 0)`; the `disable_xy` fallback also reads `(0, 0)`. This is kept as
+    an opt-in test, `tests/test_hardware.py` (`PANTOGRAPH_HARDWARE=1 uv run
+    pytest tests/test_hardware.py`; connects, lifts the pen, never moves the
+    carriage). The console-close path runs the same function, and shutdown
+    takes under a second, so the remaining check is Marc closing the window
+    on a freshly started app.
 
 **Scope rule: this is a public demo, not a launch product.** Few users are
 expected. When a choice is between saving time and adding polish, choose
@@ -55,8 +92,8 @@ installs everything it needs. The app then opens in the browser as one tool:
 | Stroke boundaries | iDraw's **state block** splits strokes; timing only rests the pen. Done in Phase −1. |
 | OSC input | **Single thread**, in arrival order. Done in Phase −1. |
 | No-pressure input | 5+ placeholder `1.0` values in a row plot at pressure 0.5. Done in Phase −1. |
-| pyaxidraw | A **copy lives in the repo** (`PantographApp/vendor/`), installed from there. Its PyPI-style name is `axicli` (G-12). |
-| Licence | **MIT** (`LICENSE` at the repo root). It covers the code. pyaxidraw keeps its own GPL licence inside its zip. |
+| pyaxidraw | A **copy lives in the repo** (`PantographApp/vendor/`, see its README): the `axicli` package (which provides `pyaxidraw`) unpacked, plus the `axidrawinternal` wheel it needs (G-12). |
+| Licence | **MIT** (`LICENSE` at the repo root). It covers the code. pyaxidraw keeps its own GPL licence (`PantographApp/vendor/`). |
 
 **What doesn't change:** the drawing pipeline's core logic (mapping, the
 optimizer, effects, replay). Behaviour changes are called out where they
@@ -107,9 +144,17 @@ points to the phase that handles it.
     the only writer.**
 11. **`__pycache__/` is committed, and there's no `.gitignore`.** → **Phase
     0.**
-12. **Pressure lags one point.** iDraw sends `/x`, `/y`, then `/pressure`,
+12. **Found 2026-09-19: shutdown never released the motors.** It ran
+    pyaxidraw mode `"res_home2"`, which doesn't exist, then logged success.
+    **Fixed**; see the hardware checks at the top.
+13. **Pressure lags one point.** iDraw sends `/x`, `/y`, then `/pressure`,
     and a point is emitted when `/y` arrives. **A fix exists but is deferred**
     until a Pencil is available (Phase −1).
+14. **Found in Phase 3: the replay tag was never sent.** The Aug 28 commit
+    ("fixed … redrawing a prerecorded SVG doubles that drawing") added
+    `_in_replay()` and page code that skips points tagged `replay`, but
+    `_emit_point` never put the tag in its message, so replayed points were
+    still recorded as if drawn. **Fixed in Phase 3** (`"replay": _in_replay()`).
 
 ---
 
@@ -166,7 +211,8 @@ iPad (iDraw OSC) ──UDP :8800──► listen_to_idraw.py  (engine, backgroun
   PantographApp/
     BUILD_GUIDE.md     this file
     deferred/          saved patches waiting on hardware (pressure-lag-fix.patch)
-    vendor/      NEW   AxiDraw_API_396.zip (pyaxidraw 3.9.6, unmodified, GPL)
+    vendor/      NEW   pyaxidraw 3.9.6 (GPL): AxiDraw_API_396/ + the axidrawinternal
+                       wheel, split apart so uv.lock stays portable (see its README)
     Pantograph.bat     Windows launcher
     Pantograph.command Mac launcher
     install-windows.ps1  Windows one-line installer (primary route)
@@ -236,118 +282,234 @@ Done first, at Marc's request. Confirmed on the iPad and AxiDraw, in the plain
 
 ### Phase 0: Groundwork and safety net
 
-- [ ] Add `.gitignore` (`__pycache__/`, `*.pyc`, `.venv/`), and remove the
-      committed `__pycache__/` from git (`git rm -r --cached`).
-- [ ] `.gitattributes`: `*.bat text eol=crlf`, `*.ps1 text eol=crlf`,
-      `*.command text eol=lf`, `*.sh text eol=lf`, `*.zip binary`. cmd
-      misreads `.bat` files with LF endings, and a `.command` with CRLF endings
-      fails.
-- [ ] **Vendor pyaxidraw:** download the zip, save it unmodified as
-      `PantographApp/vendor/AxiDraw_API_396.zip`, and add a one-line
-      `vendor/README.md` saying where it came from, its version and its GPL
-      licence (the licence file is inside the zip).
-- [ ] `pyproject.toml`:
-  - dependencies: `python-osc`, `websockets` (≥13), `numpy`, `rdp`,
-    `platformdirs`, and **`axicli`**, the distribution that provides
-    `pyaxidraw`;
-  - `[tool.uv.sources] axicli = { path = "PantographApp/vendor/AxiDraw_API_396.zip" }`;
-  - `requires-python = ">=3.12,<3.13"`;
-  - a dev group with `pytest`;
-  - no build backend (it's an application).
-- [ ] `.python-version` = `3.12`; run `uv lock`. Check that `uv run python -c
-      "from pyaxidraw import axidraw"` works.
-- [ ] Tests, written **against the current code**:
-  - The recording in every SVG in `saved_drawings/` round-trips through
-    `load_svg` / `build_svg` unchanged. These files are in git, so CI has
-    them. Skip files with no recording, such as `drawing_raw_flipped.svg`.
-  - Snapshot tests for `svg_transform.transform` and
-    `dot_healer.heal_recording`, on one or two small fixtures in
-    `tests/fixtures/`.
-  - The Phase −1 simulations, turned into tests: the state block splits
-    strokes, a pause doesn't, a rest is taken back or re-lowered, taps dwell
-    once, replay stays separate, fast points over real UDP arrive in order,
-    and the no-pressure cases. They drive the real handlers with
-    `preview.broadcast` stubbed out, and send messages in **iDraw's real
-    order**: `/x`, `/y`, `/pressure`.
-- **Checkpoint:** `uv run pytest` passes, and `python listen_to_idraw.py`
-  behaves exactly as before.
+Done 2026-09-19.
+
+- [x] `.gitignore` (`__pycache__/`, `*.pyc`, `.venv/`, `.pytest_cache/`); the
+      committed `__pycache__/` files removed from git.
+- [x] `.gitattributes`: line endings for `*.bat`/`*.ps1` (CRLF) and
+      `*.command`/`*.sh` (LF), `*.zip binary`, and the release-zip
+      `export-ignore` list from Phase 9 (added early, since it's the same
+      file).
+- [x] **pyaxidraw vendored.** Plain vendoring of the zip **didn't work**: the
+      zip bundles an `axidrawinternal` wheel in `prebuilt_dependencies/`, and
+      its `setup.py` injects that as a dependency by *absolute temporary
+      path*, so `uv.lock` recorded a path inside this machine's uv cache and
+      would have broken every other install. The fix: vendor the package
+      unpacked (`PantographApp/vendor/AxiDraw_API_396/`, trimmed to what's
+      needed, files unmodified) without that folder, plus the wheel on its own
+      (`axidrawinternal-3.9.6-py2.py3-none-any.whl`, also GPL-2.0-or-later).
+      `vendor/README.md` records the source, licence, changes and how to
+      upgrade.
+- [x] `pyproject.toml`: `python-osc`, `websockets>=13`, `numpy`, `rdp`,
+      `platformdirs`, `axicli`, `axidrawinternal` (both from
+      `[tool.uv.sources]` paths); `requires-python = ">=3.12,<3.13"`; a `dev`
+      group with `pytest`; `[tool.uv] package = false` (it's an application).
+- [x] `.python-version` = `3.12`; `uv lock` resolves 25 packages with
+      repo-relative paths only. `from pyaxidraw import axidraw` works.
+- [x] Tests (`uv run pytest`: **23 pass**):
+  - `tests/test_recordings.py`: every drawing in `saved_drawings/` with a
+    recording round-trips through `load_svg`/`build_svg`, and the two without
+    one are rejected. **Real-data regressions:** healing `drawing_dense.svg`
+    reproduces the committed `drawing_dense_healed.svg` exactly, and the 79%
+    width filter on `drawing_raw.svg` reproduces
+    `drawing_raw_minWidth79.svg` exactly. Flips are checked as involutions
+    that don't touch their input. (No separate small fixtures were needed.)
+  - `tests/test_strokes.py`: the Phase −1 behaviour, through the real
+    handlers in iDraw's order, with the `engine` fixture (`tests/conftest.py`)
+    resetting module state and capturing broadcasts. Includes real UDP through
+    the single-threaded server.
+- [x] **Checkpoint:** tests pass. `listen_to_idraw.py` itself wasn't changed
+      in this phase.
+- Dev setup used: uv 0.12.17 installed via `pip install --user uv`, run as
+  `python -m uv …`; Python 3.12.14 is downloaded by uv.
 
 ### Phase 1: Restructure the engine
 
-All in `listen_to_idraw.py`; the drawing logic is untouched.
+Done 2026-09-19 (hardware checks pending; see the list at the top). The
+drawing logic is untouched.
 
-- [ ] Move the `__main__` block into `main(argv=None)`, with startup in a
-      `start(options)` function. `__main__` becomes `sys.exit(main())`.
-- [ ] Run the OSC server on a background thread, and keep the server object
-      so that `shutdown()` can stop it.
-- [ ] `restart_osc_listener(port=None)`, used by the iPad status button and
-      when the OSC port setting changes.
-- [ ] Track `last_osc_time`, so the UI can show *waiting* vs *receiving* vs
-      *idle*.
-- [ ] A `stop_event`. `main()` starts everything, calls `shell.open_ui(url)`,
-      then waits on it.
-- [ ] A `shutdown()` that runs once, from any exit path: the Quit button,
-      Ctrl+C, Windows console close (`SetConsoleCtrlHandler` via ctypes),
-      SIGTERM/SIGHUP, and `atexit`. It lifts the pen, disengages the motors
-      (the existing `res_home2` sequence), flushes the autosave and closes the
-      server.
-- [ ] Plotter robustness:
-  - Move the pyaxidraw import inside the `try`. If it fails, the status
-    becomes "unavailable" and the app keeps running as a preview.
-  - Check `ad.connect()`'s return value. **Verify** whether it returns
-    `False` instead of raising; the current code only handles exceptions.
-  - Wrap each plotter command in a `try`. On a serial error: mark the plotter
-    disconnected, **discard the queue**, and broadcast the error. The user
-    reconnects with the button.
-  - `connect_plotter()`, callable from the UI.
-- [ ] Logging via `logging`:
-  - per-point and per-move lines at DEBUG, shown only with `--verbose`;
-  - a plain log file in the log directory;
-  - `sys.stdout.reconfigure(encoding="utf-8", errors="replace")` at startup
-    (G-34).
-- [ ] Flags: keep `--dry-run` and `--raw-osc`; add `--no-browser`, `--port N`,
-      `--verbose`, `--data-dir PATH` and `--smoke-test` (used by CI in Phase
-      9).
+- [x] `main(argv=None)` + `start()` + `shutdown()`; `__main__` is
+      `sys.exit(main())`. `start()` returns the UI URL and leaves the main
+      thread free; `main()` waits on `_stop_event` with a timed `wait(0.5)`
+      loop, because a bare `wait()` isn't interruptible by Ctrl+C on Windows.
+- [x] OSC listener on its own thread: `restart_osc_listener(port=None)` /
+      `stop_osc_listener()`. `osc_status` (`listening | port_busy | stopped`)
+      is broadcast as `osc_status`. **A busy port no longer crashes the app**:
+      it starts anyway and reports `port_busy`.
+- [x] `last_osc_time`, stamped per packet by a `BlockingOSCUDPServer`
+      subclass (`_OSCServer.process_request`).
+- [x] `shutdown()` runs once (lock + flag), from any thread: it stops OSC,
+      stops the plotter thread and joins it, *then* takes over the USB link
+      to lift the pen and run the `res_home2` disarm. Exit paths
+      (`PantographApp/shell.install_exit_handlers`): `atexit`,
+      SIGTERM/SIGHUP/SIGBREAK, the Windows console-close/logoff/shutdown
+      events (`SetConsoleCtrlHandler`), Ctrl+C (KeyboardInterrupt in
+      `main()`), and the page's new `quit` message. The autosave flush joins
+      it in Phase 3.
+- [x] Plotter robustness. **Confirmed a real bug:** pyaxidraw's `connect()`
+      returns `False` (it doesn't raise) when no AxiDraw is on USB, and the
+      old code ignored that, printed "connected", and sent moves to nothing.
+      Now:
+  - `plotter_status` (`connected | not_found | unavailable | dry_run |
+    error`) is broadcast as `plotter_status`;
+  - the pyaxidraw import is inside the `try`;
+  - each command runs in a `try`. On failure the queue is discarded and the
+    status becomes `error`; the plotter thread keeps running;
+  - `connect_plotter()` (the page's `connect_plotter` message) reconnects on
+    the plotter thread, which owns the USB link.
+- [x] Logging: `log = logging.getLogger("pantograph")`, configured by
+      `shell.setup_logging`. INFO to the console; DEBUG (every point, move,
+      stroke end, rest, mapping, tool) only with `--verbose`; a rotating log
+      file (`pantograph.log`, 1 MB × 3). stdout/stderr are reconfigured to
+      UTF-8 (G-34). `print` remains only for `--raw-osc` output, which is its
+      purpose.
+- [x] `PantographApp/shell.py`: `resolve_paths()` (drawings, config, logs,
+      runtime via `platformdirs`, or all under `--data-dir`), `setup_logging`,
+      `open_ui(url)` (the 1B seam), `install_exit_handlers`.
+- [x] Flags added: `--no-browser`, `--verbose`, `--data-dir PATH`. `--dry-run`
+      now means "never touch USB", with moves logged at DEBUG. (`--port` and
+      `--osc-port` arrived in Phase 2.)
+- [x] New page → engine messages: `quit`, `connect_plotter`, `restart_osc`.
 - **Checkpoint:**
-  - The tests pass.
-  - Plotting behaves as before.
-  - Unplugging mid-plot shows an error instead of freezing.
-  - Closing the console window lifts the pen.
+  - [x] Tests pass (23).
+  - [x] End-to-end, launching the real program in a subprocess (`--dry-run
+        --no-browser --data-dir tmp`): it starts and reports its URL, OSC
+        listens, a UDP stroke reaches the page as 20 points + `pen_up`, the
+        `quit` message exits with code 0 after shutdown, the console shows no
+        per-point lines, and the log file is written. A second run with port
+        8800 held by another socket still starts and reports `port_busy`.
+  - [x] Without `--dry-run`, it connected to the AxiDraw that happened to be
+        plugged into the dev machine, and on Quit lifted the pen and released
+        the motors (no drawing moves were sent).
+  - [x] Hardware (2026-09-19): plotting as before, and unplugging mid-plot,
+        both good.
+  - [ ] Hardware: closing the console mid-plot. The pen lifted but the motors
+        stayed on; the fix awaits a re-check (see the list at the top).
+- **Still to come from the original list:** `--smoke-test` (Phase 9).
 
 ### Phase 2: One-port server, security, single instance
 
-In `preview.py` and `PantographApp/shell.py`.
+Done 2026-09-19. In `preview.py`, `PantographApp/shell.py` and
+`listen_to_idraw.main()`.
 
-- [ ] Replace `HTTPServer` + `websockets.serve` with **one**
-      `websockets.asyncio.server.serve(...)` on **`127.0.0.1`**.
-  - `process_request` serves GET requests: `/` and `/ui/*` from
-    `PantographApp/ui/`, `/drawings/<name>` (drawings and their thumbnails)
-    and `/health`. It sends `Cache-Control: no-store`, so a stale page is
-    never shown after an update.
-  - Resolve every requested path and reject anything outside the allowed
-    folders.
-  - The WebSocket is at `/ws`, with `max_size` kept at 64 MB so replays fit.
-- [ ] **Security:**
-  - Reject WebSocket handshakes whose `Origin` isn't
-    `http://127.0.0.1:<port>` or `http://localhost:<port>`.
-  - Allow a *missing* `Origin`. Browsers always send one, so no header means
-    a local program, which could do anything anyway.
-  - Reject HTTP requests with any other `Host` header (DNS rebinding).
-- [ ] Port choice: 5810, then 5811–5830. OSC port 8800 doesn't fall back
-      automatically, because the iPad is configured for it.
-- [ ] **Single instance:** store the port in `instance.json` in the runtime
-      directory. If `/health` answers there, open the browser to that copy and
-      exit. If `python svg_transform.py file.svg` finds a copy already
-      running, it prints "Pantograph is already running; open the file from
-      the Tools tab" and exits. It doesn't hand the file over.
-- [ ] Replace `POST /save` with a `save_png` WebSocket message. SVG export
-      moves to Python in Phase 3.
+- [x] **One server:** `websockets.asyncio.server.serve(...)` on `127.0.0.1`
+      replaces `HTTPServer` + the separate WebSocket server.
+      `_process_request` answers plain HTTP (`/` → the page, `/health` →
+      `{"app": "pantograph", "pid": …}`, anything else → 404), always with
+      `Cache-Control: no-store`. `/ws` continues into the WebSocket handshake.
+      `max_size` stays 64 MB. The page connects to
+      `ws://' + location.host + '/ws'`, so it never needs to know the port.
+      **Still to come:** `/ui/*` (Phase 5, when the UI moves into files) and
+      `/drawings/<name>` for thumbnails (Phase 6), each with the
+      path-traversal guard.
+- [x] **Security:** the `Host` header must be `127.0.0.1:<port>` or
+      `localhost:<port>` (else 403: DNS rebinding). WebSocket `origins` are
+      those two plus `None` (a missing Origin means a local program).
+- [x] **Ports:** `preview.DEFAULT_PORTS` = 5810–5830, first free wins;
+      `preview.start()` returns the port it got. New flags: `--port N` (that
+      port only; exits with "Can't start" if taken) and `--osc-port N`. OSC
+      doesn't fall back automatically.
+- [x] **Single instance:** `shell.record_instance` / `running_instance` /
+      `forget_instance` (`runtime/instance.json` with port + PID, checked via
+      `/health`). A second launch opens the first copy's UI and exits 0.
+      `instance.json` is removed by shutdown (via a new `_shutdown_hooks`
+      list). The `svg_transform.py` "already running" message comes with
+      Phase 6.
+- [x] **Saving over the WebSocket:** `POST /save` is gone. The page sends
+      `save_file {filename, b64}` (PNG and SVG both, for now) and gets
+      `saved {ok, path}` back. File names are still sanitized to a basename,
+      so `../../escape.svg` lands inside the drawings folder. Saves now go to
+      the **drawings folder** (`Documents/Pantograph/`, or `--data-dir`) and
+      no longer to the repo's `saved_drawings/`.
+- [x] `preview.stop()` closes the server during shutdown; errors handling a
+      page message are logged instead of silently swallowed.
 - **Checkpoint:**
-  - A second launch opens the first copy.
-  - A WebSocket from another origin is refused.
-  - With port 5810 busy, the app uses 5811.
+  - [x] `tests/test_app.py` (new, 10 tests) launches the real program in
+        subprocesses on free ports (`--dry-run --no-browser --data-dir tmp`):
+        page + `/health` + 404 + `no-store`; foreign `Host` → 403; foreign
+        `Origin` WebSocket refused; a UDP stroke reaches the page; `save_file`
+        stays in the drawings folder; Quit → exit 0, shutdown logged,
+        `instance.json` removed, no per-point console lines; a second launch
+        defers to the first; a busy OSC port is reported but not fatal; a busy
+        explicit `--port` fails clearly.
+  - [x] **Real browser:** the same file drives headless **Edge** (or Chrome)
+        via Playwright, using the browser already installed, with no download.
+        The page connects over `/ws` ("live"), draws a 30-point UDP stroke,
+        saves an SVG, and throws no JavaScript errors. Playwright is in the
+        `dev` group; the test skips if no Edge or Chrome is installed.
+  - [x] Checked by hand once: with 5810 taken, the app falls back to 5811.
+  - Total: **33 tests pass** (`uv run pytest`).
 
 ### Phase 3: Recording, settings and data folders move into Python
+
+**Done 2026-09-19.** What was built is summarised here; the original plan
+follows for reference.
+
+- [x] **`recording.py`**: the one implementation of the format.
+  - `parse_svg`/`load_svg` moved from `svg_transform.py` (re-exported there
+    for old imports); `dot_healer.py` imports from `recording`.
+  - `build_svg(rec, w, h, include_raw=, layers=)`: white paper, raw strokes in
+    their luminance grey (alpha kept), optimized layer `#d9480f`, effect layer
+    `#1c7ed6`. Metadata only when the raw layer is included.
+  - `thumbnail_svg`, `write_atomic`, `unique_path`, `timestamped_name`.
+  - **`Recorder`**: fed by a new `preview.add_listener()` hook, which sees
+    every broadcast, browser or not. It copies the page's rules (new stroke
+    after `pen_up`, metadata latched per stroke, `replay` strokes skipped).
+    It records the optimized/effect layers, and keeps the message log that
+    rebuilds the page's picture.
+- [x] **Replay tag fixed** (§2 item 14).
+- [x] **`hello`** (`preview.register_hello_provider`): settings, the drawing's
+      message log, plotter/OSC status, paper, lag, version. The page clears
+      and replays the log through its normal message handler, so a reload,
+      a second tab, or reconnecting to a restarted app shows the drawing so
+      far. Message callbacks can now **return a reply** for the page that
+      asked.
+- [x] **Autosave:** `autosave.svg` in the drawings folder, rewritten every 2 s
+      while the drawing changes (atomically). **Clean exit and "New drawing"
+      save the session as `drawing-<date>_<time>.svg` and remove
+      `autosave.svg`.** So an `autosave.svg` found at startup means a crash,
+      and it's kept as `recovered-<time>.svg`: no prompt, nothing lost.
+- [x] **"clear" → "new drawing"**: saves on the computer, then every open page
+      clears (`new_drawing` broadcast).
+- [x] **SVG export from Python** (`save_svg {filename, layers}`); PNG still
+      renders in the page (`save_file`). The old JS recording/SVG code
+      (`buildRecording`, `layerSvgParts`, `allStrokes`, `xmlEscape`) was
+      removed.
+- [x] **Settings** (`PantographApp/settings.py`): `settings.json` holds the
+      page's own `axi_*` key → string map, so the page code barely changed.
+  - The page's storage calls go through a `store` wrapper that pushes every
+    change (`save_settings`, debounced).
+  - On `hello`, if the computer's copy differs, the page adopts it and
+    **reloads once**, so every control is rebuilt. If the computer has none
+    yet, the page's copy is adopted.
+  - At startup, `engine_messages()` turns the saved keys into the same
+    `set_*` messages the page sends, applied before any page connects.
+    Effect-param keys (`<effect>_<ATTR>`, both halves can contain `_`) are
+    resolved by the engine via `set_effect_param_key`.
+- [x] **Paper size + AxiDraw model** (engine side): `AXIDRAW_MODELS` (7
+      models: name, long/short travel), `set_paper(w, h)` (either
+      orientation, clamped to the model's reach, refused mid-plot, recomputes
+      the mapping + effect context), `set_model(n)` (re-clamps; reconnects
+      if connected); `ad.options.model` set on connect. Saved as
+      `axi_model`/`axi_paperW`/`axi_paperH`. **The page controls come in
+      Phase 5.**
+- [x] Drawings go to `Documents/Pantograph/` (`--data-dir` overrides); the
+      version shown comes from `pyproject.toml` (`shell.app_version()`).
+- [x] README updated (drawings folder, settings, new drawing, 127.0.0.1:5810,
+      the format section, the Files table).
+- **Checkpoint:**
+  - [x] A reload mid-drawing loses nothing (real-browser test: 25-point
+        stroke, reload, still there; then "new drawing" saves and clears).
+  - [x] The exported SVG round-trips to exactly the recording; the format is
+        unchanged, so it replays like the old files. Every
+        `saved_drawings/` file still loads.
+  - [x] Tests: `tests/test_session.py` (12, unit) + 8 new end-to-end tests
+        (catch-up on connect, autosave → new drawing, quit saves, crash →
+        `recovered-…svg`, `save_svg`, replay not recorded, settings persist
+        and apply at startup) + a browser test where the page adopts the
+        computer's settings. **53 tests pass.**
+
+<details><summary>Original Phase 3 plan</summary>
 
 The most important structural change. Read §2 items 1 and 10 first.
 
@@ -401,16 +563,30 @@ The most important structural change. Read §2 items 1 and 10 first.
     test).
   - Every SVG in `saved_drawings/` still loads.
 
+</details>
+
 ### Phase 4: Plotter optional, `iDraw_to_svg/` removed
 
-- [ ] Plotter status: `connected | not_found | unavailable | dry_run |
-      error(message)`, broadcast on change.
-- [ ] With no AxiDraw, everything else works. Plot buttons are disabled with a
-      reason.
-- [ ] Delete `iDraw_to_svg/`. Update the README's "No AxiDraw" notes, and the
-      `remote-version-sync` project memory.
-- **Checkpoint:** with no pyaxidraw or no AxiDraw, the whole app runs with only
-  the plot actions greyed out.
+Done 2026-09-19.
+
+- [x] Plotter status: `connected | not_found | unavailable | dry_run |
+      error(message)`, broadcast as `plotter_status` on change. (Built in
+      Phase 1; it's also in `hello`.)
+- [x] With no AxiDraw, everything else works: the plotter thread consumes
+      and logs commands with nothing attached, and recording, saving and
+      replay all run. **Greying out the plot buttons (with the reason) is
+      page work, so it's in Phase 5.**
+- [x] `iDraw_to_svg/` deleted. Its one sample drawing moved to
+      `saved_drawings/drawing_from_iDraw_to_svg.svg` and is in the round-trip
+      test, so files made by the old copy keep loading. README: setup step 7
+      is one command with or without an AxiDraw, the "No AxiDraw" notes in
+      step 10 are rewritten, the internals section and Files row are gone,
+      and a link broken by Phase 3's heading change is fixed. The
+      `remote-version-sync` project memory was deleted. (`MEETINGS.html` is
+      history and still mentions it, correctly.)
+- **Checkpoint:** [x] `--dry-run` runs the whole app with the plotter in
+  `dry_run` (every end-to-end test does this); "not found" was seen in the
+  Phase 1 code path; [x] **54 tests pass**.
 
 ### Phase 5: The UI
 
@@ -467,6 +643,17 @@ First move the UI, then restyle it, as separate commits.
     - **Effects:** built from `postprocess.effect_specs()`, as today.
     - **Tools:** flip H/V, minimum-width filter, heal dots (with its report).
       Each saves a new file and opens it.
+    - **Clear without saving** (added 2026-09-19, Marc): next to "new
+      drawing", a way to clear the preview and start fresh *without*
+      keeping what's there, since "new drawing" always saves. It needs an
+      in-page confirmation ("Discard this drawing?"; no `confirm()`, per the
+      1B rules), because it's the one action that deletes work. Backend: a
+      `discard_drawing` message → `Recorder.clear()`, delete `autosave.svg`,
+      broadcast `new_drawing` with `saved: null` (the pages already handle
+      that).
+    - **Replay controls** (added 2026-09-19, Marc): while a saved drawing is
+      plotting ("plot svg"), show its progress with **Pause/Resume** and
+      **Cancel** (backend in Phase 6).
     - **Drawings:** a list of saved drawings (name, date, thumbnail), with
       Open and Plot; an "Open drawings folder" button; and "Open file…" to
       load an SVG from elsewhere (it replaces today's "plot svg").
@@ -491,6 +678,20 @@ First move the UI, then restyle it, as separate commits.
       with suffixes `_flipped`, `_minWidth<N>` and `_healed` as the CLIs use
       today), and `plot_drawing` (the existing replay path).
 - [ ] Tools run on the open drawing: the live session, or a saved one.
+- [ ] **Pause/resume and cancel a replay plot** (added 2026-09-19, Marc).
+      `_replay_recording` runs on its own thread and only *feeds* points; the
+      plotter may be seconds behind it. So:
+  - **Pause** must stop both the replay thread feeding points and the plotter
+    thread taking commands (an `Event` each checks); the pen rests (lifts)
+    while paused. **Resume** clears both.
+  - **Cancel** stops the replay thread (a flag checked per point), discards the
+    queue, lifts the pen (and ends the open stroke so its effects don't fire
+    oddly), and leaves the app ready to draw. Live drawing during a paused
+    replay shouldn't be possible, or should cancel the replay first. Decide
+    this when building it.
+  - Messages: `replay_pause`, `replay_resume`, `replay_cancel`;
+    `replay_progress {done, total, paused}` broadcast every ~0.5 s for the
+    progress bar.
 - [ ] Transforms and heals run on a worker thread, so the WebSocket never
       blocks.
 - [ ] Thumbnails: `thumbnail_svg()`, cached next to the drawing and rebuilt if
@@ -626,8 +827,9 @@ Both installers:
 - [ ] README Troubleshooting: **networks that isolate devices** (school, work,
       hotel and guest Wi-Fi), with a hotspot to test and Tailscale to fix;
       Windows Public networks; firewall.
-- [ ] A "Developers" section: `uv run listen_to_idraw.py`, plus the plain
-      `pip install` route (including `pip install PantographApp/vendor/AxiDraw_API_396.zip`).
+- [ ] A "Developers" section: `uv run listen_to_idraw.py` and
+      `uv run pytest`, plus the plain `pip install` route (including
+      `pip install PantographApp/vendor/axidrawinternal-3.9.6-py2.py3-none-any.whl PantographApp/vendor/AxiDraw_API_396`).
 - [ ] Run the §6 test list.
 - [ ] Add a note to `MEETINGS.html` if relevant.
 
@@ -754,7 +956,7 @@ The known risks, each with its mitigation and phase. Re-check before release.
 | G-9 | Mac blocks the click-downloaded `.command` ("Open Anyway" in System Settings since Sequoia) | The primary route (`install-mac.sh`) avoids the quarantine flag entirely. The click route gets screenshots and a `chmod +x` fallback | 8, 10 |
 | G-10 | Windows shows "Publisher could not be verified" for the click-downloaded `.bat` | The primary route (`install-windows.ps1`) avoids the mark-of-the-web entirely. The click route: expected, one screenshot | 8, 10 |
 | G-11 | pyaxidraw supports Python ≤ 3.12 | Pin 3.12 | 0 |
-| G-12 | pyaxidraw's URL is unversioned, and its distribution name is `axicli`, not `pyaxidraw` | Vendored zip in `PantographApp/vendor/`, installed through `[tool.uv.sources]` as `axicli`; upgrade deliberately (replace the zip, test, re-lock) | 0 |
+| G-12 | pyaxidraw's URL is unversioned; its distribution name is `axicli`; and its `setup.py` injects the bundled `axidrawinternal` wheel by absolute temp path, which poisons `uv.lock` | Vendored unpacked, without `prebuilt_dependencies/`, plus the wheel on its own; both via `[tool.uv.sources]`. Upgrade steps in `vendor/README.md`. **Done (Phase 0)** | 0 |
 | G-13 | First launch needs internet and about 150 MB | Clear message; README says so | 8, 10 |
 | G-14 | Locked-down school or work machines block downloads or scripts | Pinned uv binary avoids the common blocks; the click route is the fallback for a blocked installer; otherwise no fix | 8 |
 | G-15 | Dependencies or data inside synced or replaced folders | Runtime in local app data; drawings in Documents; replacing the app folder loses nothing | 3, 8 |
@@ -802,7 +1004,7 @@ No questions are open. Recorded answers, all folded into §1:
 | 2026-09-19 | Scope | Demo: prefer saving time over polish |
 | 2026-09-19 | Install routes | Both routes on both platforms; command line primary; README shows them side by side |
 | 2026-09-19 | Pressure lag | Fix it, but deferred until a Pencil is available; patch saved |
-| 2026-09-19 | pyaxidraw | Vendored in the repo (decided under the scope rule: simpler than a hosted download) |
+| 2026-09-19 | pyaxidraw | Vendored in the repo (decided under the scope rule: simpler than a hosted download); split into package + wheel to keep `uv.lock` portable |
 
 ---
 

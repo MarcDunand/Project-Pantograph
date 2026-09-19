@@ -1,0 +1,159 @@
+AxiDraw CLI and Python API — Installation
+
+Supported on python 3.8 and newer
+Mac, Windows, and Linux.
+
+
+—————————————————————————————————————————
+INSTALLATION
+
+1.) Install python (minimum version 3.8)
+
+Macs and linux boxes usually have python pre-installed.
+
+If you are on Windows, you'll probably not already have this on your computer. 
+Go to: https://www.python.org/download/
+
+
+2.) [Recommended, optional] Use `venv` to control versioning
+
+Create a virtual python environment:
+
+    python3 -m venv venv
+
+Replace `python3` with the name of the python on your system you want to use, e.g.  `python`, `py`,
+`python3.11`, etc.
+
+This creates a directory called `venv` which contains the files for the new environment.
+
+Activate the environment:
+
+    source venv/bin/activate # bash/zsh shells, like on mac, ubuntu
+    venv\Scripts\Activate.ps1 # windows powershell
+
+Now your command prompt should be prefixed with `(venv)`, indicating that you are now in the virtual
+environment you created.  You can now continue as normal.  More reading about python virtual
+environments: https://docs.python.org/3/library/venv.html
+
+
+3.) Install this software (`pyaxidraw` and `axicli`)
+
+Unzip the archive and move into the folder:
+
+    cd /Users/username/Documents/axidraw-api/  (Your location and path will vary)
+
+Then use pip to install it:
+
+    pip install .
+
+Some additional flags on the `pip` command (like `--user`) are not supported in most situations. If
+you need to customize the installation (e.g., with extra `pip` flags like `--user`), you can modify
+the following commands and use them instead:
+
+    pip install prebuild_dependencies/* # add flags here, e.g. `--user`
+    pip install . # add flags here, e.g. `--user`
+
+4.) Test that the software is operational:
+
+A (very simple) sample file is included. You can plot it with the following command line:
+
+    axicli test/assets/AxiDraw_trivial.svg
+
+If everything is set up correctly, this should plot the SVG file, which contains a very simple
+drawing.
+
+
+
+—————————————————————————————————————————
+GETTING STARTED
+
+* Getting started with the command-line interface:
+You can get additional documentation and command-line usage options by using
+
+    axicli --help
+
+or refer to the full documentation, at: https://axidraw.com/doc/cli_api/
+
+An example file is included. To plot it, use:
+
+    axicli test/assets/AxiDraw_trivial.svg
+
+* Getting started with the python API:
+Two example python scripts are included. See README.txt for instructions.
+
+For the full python API documentation, please see: https://axidraw.com/doc/py_api/. The same API
+documentation is also included in the `documentation` folder of this download.
+
+________________________________________
+TROUBLESHOOTING
+
+(A) If you get errors (especially on Windows) indicating that `axicli` or `pip` is not a recognized
+command, you may need to add `python -m` to the beginning of the commands, e.g.:
+
+    python -m axicli <input> '
+    python -m pip install <etc>
+
+You may need to replace `python` with the name of the python on your system you want to use, e.g.
+`python3`, `python3.11`, etc.
+
+You can add the python scripts directory to your system path in order to use `axicli` or `pip`
+directly.
+
+(B) If you get the error “The fantastic lxml wrapper for libxml2 is required [...]”, then you do not
+have lxml installed. Additional help for lxml installation is available here:
+http://lxml.de/installation.html.
+
+You can also contact technical support.
+
+(C) If you get the error "ImportError: No module named pyserial", then you do not have pyserial installed.
+
+(D) If you get the error "Failed to connect to AxiDraw":
+    1. On linux, this message may indicate permissions problems. Refer to https://wiki.evilmadscientist.com/Axidraw_Software_Installation#About_adding_your_user_account_to_the_.22dialout.22_group
+    2. Your computer may not be able to locate the AxiDraw via USB. Check that it's plugged in.
+
+If you do not have an AxiDraw in front of you, you can still use various offline functions. The
+following will render a preview of how the file will plot, and report the time that it will take to
+plot, even with no AxiDraw machine present:
+
+    axicli test/assets/AxiDraw_trivial.svg -Tvg3 -o outputfile.svg
+
+
+
+_________________________________________
+UNINSTALLING
+
+If you used a python virtual environment (step 2), uninstalling is as simple as leaving the virtual
+environment.  The easiest way to do that is to close your terminal.
+
+If you did not use a virtual environment, use pip to uninstall:
+
+    pip uninstall pyaxidraw axicli
+
+You may also want to uninstall `pyaxidraw`'s dependencies, assuming you aren't using them for anything
+else:
+
+    pip uninstall -r requirements/requirements.txt
+
+
+
+—————————————————————————————————————————
+SUPPLEMENTARY INSTRUCTIONS
+
+Recommended procedures for installing this software:
+
+(A) Mac Users:
+
+From the terminal, enter the following, providing password when requested:
+
+    xcode-select --install
+
+
+(B) Windows Users:
+
+You may need to open your command prompt with a right-click and "Run as administrator" in order to
+avoid permissions errors.
+
+
+
+—————————————————————————————————————————
+Copyright 2021 Windell H Oskay, Evil Mad Scientist Laboratories

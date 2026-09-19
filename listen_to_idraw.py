@@ -24,8 +24,10 @@ Dependencies:
 
 import argparse
 import collections
+import logging
 import math
 import socket
+import sys
 import threading
 import time
 
@@ -37,6 +39,12 @@ from pythonosc.osc_server import BlockingOSCUDPServer
 
 import postprocess
 import preview
+import recording
+
+# Everything goes through this logger: INFO and up reach the console, DEBUG
+# (every point and plotter move) only with --verbose. PantographApp.shell sets
+# up the handlers, including the log file.
+log = logging.getLogger("pantograph")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION — edit these values to match your setup
@@ -48,11 +56,25 @@ OSC_PORT = 8800
 # Finger input always reports 1.0. Divide raw values by this to get a 0–1 scale.
 OSC_PRESSURE_MAX = 4.166666507720947
 
-# Physical plotting area on paper, in inches.
-# The AxiDraw will never move outside this rectangle.
-# Change these when you switch paper sizes or want a smaller plot area.
+# Physical plotting area on paper, in inches, portrait (width ≤ height).
+# The AxiDraw will never move outside this rectangle. These are the defaults;
+# the paper size is a setting (set_paper), clamped to what the AxiDraw model
+# can reach.
 PAPER_WIDTH_IN  = 8.5
 PAPER_HEIGHT_IN = 11
+
+# AxiDraw models, by pyaxidraw's options.model number: (name, travel along the
+# machine's long axis, travel along its short axis), in inches. The paper's
+# long side runs along the long axis (see canvas_to_physical).
+AXIDRAW_MODELS = {
+    1: ("AxiDraw V2 / V3 / SE/A4", 11.81, 8.58),
+    2: ("AxiDraw SE/A3",           16.93, 11.69),
+    3: ("AxiDraw V3 XLX",          23.39, 8.58),
+    4: ("AxiDraw MiniKit",          6.30, 4.00),
+    5: ("AxiDraw SE/A1",           34.02, 23.39),
+    6: ("AxiDraw SE/A2",           23.39, 17.01),
+    7: ("AxiDraw V3/B6",            7.48, 5.51),
+}
 
 # Strokes are no longer split by timing. iDraw OSC sends a "state block"
 # (/r /g /b /a, the tool flags, /canvasWidth, /canvasHeight, /drawingWidth,
@@ -460,17 +482,46 @@ def _compute_effective_scale(lag: float) -> float:
 # PLOTTER THREAD  +  ADAPTIVE OPTIMIZER
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _plotter_thread():
-    """
-    Polls the plot deque and executes commands on the AxiDraw one at a time.
-    Records command age at dequeue time to keep _current_lag_sec up to date.
-    """
-    global _ad, _current_lag_sec
+# What the plotter is doing, for the UI's status button. States:
+#   connected    — AxiDraw open and taking commands
+#   not_found    — no AxiDraw on USB (commands are logged and dropped)
+#   unavailable  — pyaxidraw isn't installed
+#   dry_run      — --dry-run: never touch USB
+#   error        — was connected, then failed (message says why); queue discarded
+plotter_status = {"state": "not_found", "message": ""}
 
-    if not DRY_RUN:
+_plotter_connect_request = threading.Event()   # set by connect_plotter(); served by the plotter thread
+_plotter_stop            = threading.Event()   # set by shutdown(); the plotter thread exits
+_plotter_thread_handle: threading.Thread | None = None
+
+
+def _set_plotter_status(state: str, message: str = "") -> None:
+    plotter_status.update(state=state, message=message)
+    preview.broadcast({"type": "plotter_status", **plotter_status})
+    level = logging.ERROR if state == "error" else logging.INFO
+    log.log(level, "[axidraw] %s%s", state, f" — {message}" if message else "")
+
+
+def connect_plotter() -> None:
+    """Ask the plotter thread to (re)connect the AxiDraw. Safe from any thread."""
+    _plotter_connect_request.set()
+
+
+def _open_axidraw():
+    """
+    Open the AxiDraw and put it in a known state. Returns the handle, or None
+    with plotter_status saying why. Only ever called on the plotter thread,
+    which owns the USB connection.
+    """
+    try:
         from pyaxidraw import axidraw
+    except Exception as e:           # noqa: BLE001 — any import failure means no plotter
+        _set_plotter_status("unavailable", f"pyaxidraw isn't installed ({e})")
+        return None
+    try:
         ad = axidraw.AxiDraw()
         ad.interactive()
+        ad.options.model = _axidraw_model
         ad.options.units = 0   # use inches
         ad.options.speed_pendown = 15
         ad.options.speed_penup = 25
@@ -479,52 +530,60 @@ def _plotter_thread():
         ad.options.pen_rate_raise = 70
         ad.options.pen_delay_down = -100
         ad.options.pen_delay_up = -100
-        try:
-            ad.connect()
-            ad.options.pen_pos_up   = _pen_pos_up
-            ad.options.pen_pos_down = _pen_down_min
-            ad.update()          # push pen positions to EBB via servo_init
-            ad.penup()           # ensure known pen state on startup
-            print("[axidraw] connected")
-            _ad = ad
-        except Exception as e:
-            print(f"[axidraw] ERROR: could not connect — {e}")
-            print("[axidraw] falling back to dry-run output")
-            ad = None
-    else:
+        # connect() returns False (it doesn't raise) when no AxiDraw is on USB.
+        if not ad.connect():
+            _set_plotter_status("not_found", "no AxiDraw found on USB")
+            return None
+        ad.options.pen_pos_up   = _pen_pos_up
+        ad.options.pen_pos_down = _pen_down_min
+        ad.update()          # push pen positions to EBB via servo_init
+        ad.penup()           # ensure known pen state on startup
+    except Exception as e:           # noqa: BLE001
+        _set_plotter_status("error", f"could not connect ({e})")
+        return None
+    _set_plotter_status("connected")
+    return ad
+
+
+def _close_axidraw(ad) -> None:
+    try:
+        ad.disconnect()
+    except Exception:                # noqa: BLE001 — it's going away either way
+        pass
+
+
+def _plotter_thread():
+    """
+    Polls the plot deque and executes commands on the AxiDraw one at a time.
+    Records command age at dequeue time to keep _current_lag_sec up to date.
+    Owns the USB connection: connecting, reconnecting and command errors all
+    happen here. With no AxiDraw, commands are logged (DEBUG) and dropped.
+    """
+    global _ad, _current_lag_sec
+
+    if DRY_RUN:
         ad = None
-        print("[axidraw] DRY RUN mode — no USB connection")
+        _set_plotter_status("dry_run", "--dry-run: moves are logged, not plotted")
+    else:
+        ad = _open_axidraw()
+    _ad = ad
 
     # Per-stroke state for mid-stroke pressure updates (local to this thread)
-    _lineto_counter      = 0
-    _last_applied_down   = None   # last pen_pos_down sent to EBB this stroke
+    lineto_counter    = 0
+    last_applied_down = None   # last pen_pos_down sent to EBB this stroke
 
-    while True:
-        cmd = None
-        with _plot_lock:
-            if _plot_deque:
-                cmd = _plot_deque.popleft()
-
-        if cmd is None:
-            time.sleep(0.005)
-            continue
-
-        # cmd = (enqueue_time, kind, *args)
-        _current_lag_sec = time.monotonic() - cmd[0]
+    def run(cmd):
+        nonlocal lineto_counter, last_applied_down
         kind = cmd[1]
 
         if kind == "moveto":
             x, y = cmd[2], cmd[3]
-            if not _show_raw_osc:
-                print(f"[axidraw] travel → ({x:.3f}\", {y:.3f}\")")
+            log.debug("[axidraw] travel → (%.3f\", %.3f\")", x, y)
             if ad:
                 ad.options.pen_pos_up = _pen_pos_up
                 ad.update()
                 ad.penup()
                 ad.moveto(x, y)
-            elif not _show_raw_osc:
-                print(f"  penup")
-                print(f"  moveto  ({x:.3f}\", {y:.3f}\")")
 
         elif kind == "pendown":
             pressure = cmd[2] if len(cmd) > 2 else 1.0
@@ -536,14 +595,13 @@ def _plotter_thread():
                 target = float(_pen_down_min)
             target += _tilt_pen_offset(px_cmd, py_cmd)
             target_pos = max(0, min(100, round(target)))
+            log.debug("  pendown  (pos=%d)", target_pos)
             if ad:
                 ad.options.pen_pos_down = target_pos
                 ad.update()
                 ad.pendown()
-            elif not _show_raw_osc:
-                print(f"  pendown  (pos={target_pos})")
-            _lineto_counter    = 0
-            _last_applied_down = target_pos
+            lineto_counter    = 0
+            last_applied_down = target_pos
 
         elif kind == "lineto":
             x, y = cmd[2], cmd[3]
@@ -551,84 +609,97 @@ def _plotter_thread():
 
             if (_variable_pressure or _x_tilt_deg != 0.0 or _y_tilt_deg != 0.0) and _pressure_update_rate > 0:
                 interval = max(1, round(100 / _pressure_update_rate))
-                _lineto_counter += 1
-                if _lineto_counter % interval == 0:
+                lineto_counter += 1
+                if lineto_counter % interval == 0:
                     if _variable_pressure:
                         target = _pen_down_min + (_pen_down_max - _pen_down_min) * pressure
                     else:
                         target = float(_pen_down_min)
                     target += _tilt_pen_offset(x, y)
                     new_pos = max(0, min(100, round(target)))
-                    if new_pos != _last_applied_down:
-                        _last_applied_down = new_pos
+                    if new_pos != last_applied_down:
+                        last_applied_down = new_pos
+                        log.debug("  [pressure/tilt] pos=%d", new_pos)
                         if ad:
                             ad.options.pen_pos_down = new_pos
                             ad.update()
-                        elif not _show_raw_osc:
-                            print(f"  [pressure/tilt] pos={new_pos}")
 
+            log.debug("  lineto  (%.3f\", %.3f\")", x, y)
             if ad:
                 ad.lineto(x, y)
-            elif not _show_raw_osc:
-                print(f"  lineto  ({x:.3f}\", {y:.3f}\")")
 
         elif kind == "dot_dwell":
+            log.debug("  [dot — 100ms dwell]")
             if ad:
                 time.sleep(0.1)
-            elif not _show_raw_osc:
-                print(f"  [dot — 100ms dwell]")
 
         elif kind == "penup":
-            if not _show_raw_osc:
-                print(f"[axidraw] pen up")
+            log.debug("[axidraw] pen up")
             if ad:
                 ad.options.pen_pos_up = _pen_pos_up
                 ad.update()
                 ad.penup()
-            elif not _show_raw_osc:
-                print(f"  penup")
 
         elif kind == "home":
-            if not _show_raw_osc:
-                print(f"[axidraw] homing → (0.000\", 0.000\")")
+            log.info("[axidraw] homing → (0.000\", 0.000\")")
             if ad:
                 ad.options.pen_pos_up = _pen_pos_up
                 ad.update()
                 ad.penup()
                 ad.moveto(0, 0)
-            elif not _show_raw_osc:
-                print(f"  penup")
-                print(f"  moveto  (0.000\", 0.000\")")
 
         elif kind == "pen_test_up":
-            if not _show_raw_osc:
-                print(f"[axidraw] pen test → up (pos={_pen_pos_up})")
+            log.info("[axidraw] pen test → up (pos=%d)", _pen_pos_up)
             if ad:
                 ad.options.pen_pos_up = _pen_pos_up
                 ad.update()   # servo_init re-sends SC commands; moves pen if pos changed
                 ad.penup()
-            elif not _show_raw_osc:
-                print(f"  penup (pos={_pen_pos_up})")
 
         elif kind == "pen_test_min":
-            if not _show_raw_osc:
-                print(f"[axidraw] pen test → min down (pos={_pen_down_min})")
+            log.info("[axidraw] pen test → min down (pos=%d)", _pen_down_min)
             if ad:
                 ad.options.pen_pos_down = _pen_down_min
                 ad.update()
                 ad.pendown()
-            elif not _show_raw_osc:
-                print(f"  pendown (pos={_pen_down_min})")
 
         elif kind == "pen_test_max":
-            if not _show_raw_osc:
-                print(f"[axidraw] pen test → max down (pos={_pen_down_max})")
+            log.info("[axidraw] pen test → max down (pos=%d)", _pen_down_max)
             if ad:
                 ad.options.pen_pos_down = _pen_down_max
                 ad.update()
                 ad.pendown()
-            elif not _show_raw_osc:
-                print(f"  pendown (pos={_pen_down_max})")
+
+    while not _plotter_stop.is_set():
+        if _plotter_connect_request.is_set():
+            _plotter_connect_request.clear()
+            if not DRY_RUN:
+                if ad:
+                    _close_axidraw(ad)
+                ad = _open_axidraw()
+                _ad = ad
+
+        cmd = None
+        with _plot_lock:
+            if _plot_deque:
+                cmd = _plot_deque.popleft()
+
+        if cmd is None:
+            time.sleep(0.005)
+            continue
+
+        # cmd = (enqueue_time, kind, *args)
+        _current_lag_sec = time.monotonic() - cmd[0]
+        try:
+            run(cmd)
+        except Exception as e:       # noqa: BLE001 — typically the USB cable was pulled
+            # The rest of the queue was planned for a machine we no longer
+            # control; drop it rather than replay it into an unknown position.
+            with _plot_lock:
+                _plot_deque.clear()
+            if ad:
+                _close_axidraw(ad)
+            ad = _ad = None
+            _set_plotter_status("error", f"lost the AxiDraw during '{cmd[1]}' ({e}); queue discarded")
 
 
 def _run_rdp_on_deque(epsilon: float) -> int:
@@ -712,8 +783,8 @@ def _optimizer_thread():
         with _plot_lock:
             n = _run_rdp_on_deque(epsilon)
 
-        if n > 0 and not _show_raw_osc:
-            print(f"[opt] -{n} pts  lag={lag:.2f}s  ε={epsilon:.4f}\"")
+        if n > 0:
+            log.debug("[opt] -%d pts  lag=%.2fs  ε=%.4f\"", n, lag, epsilon)
 
 
 def _lag_broadcast_thread():
@@ -786,7 +857,7 @@ def _replay_recording(rec: dict) -> None:
 
     strokes = rec.get("strokes") or []
     n_pts   = sum(len(s.get("points") or []) for s in strokes)
-    print(f"[replay] {len(strokes)} stroke(s), {n_pts} point(s) — starting")
+    log.info("[replay] %d stroke(s), %d point(s) — starting", len(strokes), n_pts)
 
     # Tag every point this thread emits as replay-originated, so the browser
     # animates it without recording it. Without this the browser re-records the
@@ -839,7 +910,7 @@ def _replay_recording(rec: dict) -> None:
         # for the state block iDraw would have sent before the next one.
         _end_stroke()
 
-    print("[replay] done")
+    log.info("[replay] done")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -876,8 +947,7 @@ def _end_stroke():
                 # from, so plot it at the no-pressure value — pendown is in the
                 # buffer, so this is where the pen first goes down.
                 _flush_pending_024(NO_PRESSURE_VALUE, from_pressure=NO_PRESSURE_VALUE)
-                if not _show_raw_osc:
-                    print(f"[pressure] no pressure data in this stroke — plotted at {NO_PRESSURE_VALUE}")
+                log.debug("[pressure] no pressure data in this stroke — plotted at %s", NO_PRESSURE_VALUE)
             else:
                 # Trailing spurious points — interpolate pressure down to 0. (A
                 # rested pen never gets here: resting flushes these, and points
@@ -893,8 +963,7 @@ def _end_stroke():
         _enqueue(postprocess.penup(t))
         _last_plot_pt = None
         _stroke_had_moves = False
-        if not _show_raw_osc:
-            print("[stroke end]")
+        log.debug("[stroke end]")
 
 
 def _state_block_seen():
@@ -933,8 +1002,7 @@ def _maybe_rest_pen():
         with _plot_lock:
             _plot_deque.extend(cmds)
         _rest_cmds = cmds
-        if not _show_raw_osc:
-            print("[pen rest — pause]")
+        log.debug("[pen rest — pause]")
 
 
 def _resume_after_rest(t: float, pressure: float) -> None:
@@ -954,15 +1022,13 @@ def _resume_after_rest(t: float, pressure: float) -> None:
             for _ in range(n):
                 _plot_deque.pop()
             _rest_dwelled = False
-            if not _show_raw_osc:
-                print("[pen rest taken back — still queued]")
+            log.debug("[pen rest taken back — still queued]")
             return
     if _effects_only:
         return
     lx, ly = _last_plot_pt
     _enqueue_raw(postprocess.pendown(t, pressure, lx, ly))
-    if not _show_raw_osc:
-        print("[pen down again — stroke continues]")
+    log.debug("[pen down again — stroke continues]")
 
 
 def _pen_rest_thread():
@@ -1053,8 +1119,7 @@ def _emit_point():
             pressure_norm = NO_PRESSURE_VALUE
             if _pending_024:
                 _flush_pending_024(pressure_norm, from_pressure=pressure_norm)
-                if not _show_raw_osc:
-                    print(f"[pressure] no pressure data — plotting at {NO_PRESSURE_VALUE}")
+                log.debug("[pressure] no pressure data — plotting at %s", NO_PRESSURE_VALUE)
             _stroke_has_good_pressure  = True
             _stroke_last_good_pressure = pressure_norm
 
@@ -1117,14 +1182,12 @@ def _emit_point():
         "drawingWidth": state["drawingWidth"],
         "canvasWidth":  state["canvasWidth"],
         "canvasHeight": state["canvasHeight"],
+        # So the page and the recorder draw replayed points without recording
+        # them (else replaying a drawing records it a second time).
+        "replay":       _in_replay(),
     })
 
-    if not _show_raw_osc:
-        print(
-            f"[point] ({x:.1f}, {y:.1f})  "
-            f"p={pressure_norm:.2f}  "
-            f"tool={state['tool']}"
-        )
+    log.debug("[point] (%.1f, %.1f)  p=%.2f  tool=%s", x, y, pressure_norm, state["tool"])
 
 
 def _handle_x(address, *args):
@@ -1194,13 +1257,9 @@ def _update_mapping():
     if w and h:
         state["_mapping"] = compute_mapping(w, h)
         m = state["_mapping"]
-        if not _show_raw_osc:
-            print(
-                f"[mapping] canvas {w:.0f}×{h:.0f}px → "
-                f"draw area {m['draw_w']:.2f}\"×{m['draw_h']:.2f}\" "
-                f"on {PAPER_WIDTH_IN}\"×{PAPER_HEIGHT_IN}\" paper  "
-                f"(margins: x={m['margin_x']:.2f}\" y={m['margin_y']:.2f}\")"
-            )
+        log.debug("[mapping] canvas %.0f×%.0fpx → draw area %.2f\"×%.2f\" on %s\"×%s\" paper  "
+                  "(margins: x=%.2f\" y=%.2f\")", w, h, m["draw_w"], m["draw_h"],
+                  PAPER_WIDTH_IN, PAPER_HEIGHT_IN, m["margin_x"], m["margin_y"])
         preview.broadcast({"type": "canvas_size", "width": w, "height": h})
 
 def _handle_tool_flag(address, *args):
@@ -1212,14 +1271,13 @@ def _handle_tool_flag(address, *args):
     if value == 1.0:
         state["tool"] = tool_name
         preview.broadcast({"type": "tool_change", "tool": tool_name})
-        if not _show_raw_osc:
-            print(f"[tool] -> {tool_name}")
+        log.debug("[tool] -> %s", tool_name)
 
 def _handle_unknown(address, *args):
     if _show_raw_osc:
         _log_raw(address, *args)
     else:
-        print(f"[unknown] {address}: {args}")
+        log.debug("[unknown] %s: %s", address, args)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1252,10 +1310,470 @@ def _build_dispatcher() -> Dispatcher:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# BROWSER → ENGINE MESSAGES
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _handle_preview_message(msg):
+    """Control messages from the page: settings, plotter commands, replay, quit."""
+    global _opt_enabled, _opt_scale, _lag_threshold_sec, _limit_lag, _min_dist_in, \
+           _variable_pressure, _pen_pos_up, _pen_down_min, _pen_down_max, _pressure_update_rate, \
+           _x_tilt_deg, _y_tilt_deg, _effects_only
+    t = msg.get("type")
+    if t == "home":
+        _enqueue_raw((time.monotonic(), "home"))
+        log.info("[axidraw] home queued — will execute after current commands")
+    elif t == "set_opt_enabled":
+        _opt_enabled = bool(msg.get("enabled", True))
+    elif t == "set_opt_scale":
+        _opt_scale = float(msg.get("value", 0.5))
+    elif t == "set_lag_threshold":
+        _lag_threshold_sec = max(0.1, float(msg.get("value", 3.0)))
+    elif t == "set_limit_lag":
+        _limit_lag = bool(msg.get("enabled", True))
+    elif t == "set_min_dist":
+        _min_dist_in = max(0.001, float(msg.get("value", STREAM_MIN_DIST_IN)))
+    elif t == "set_variable_pressure":
+        _variable_pressure = bool(msg.get("enabled", False))
+    elif t == "set_pen_up_pos":
+        _pen_pos_up = max(0, min(100, int(round(float(msg.get("value", 60))))))
+    elif t == "set_pen_down_min":
+        _pen_down_min = max(0, min(100, int(round(float(msg.get("value", 40))))))
+    elif t == "set_pen_down_max":
+        _pen_down_max = max(0, min(100, int(round(float(msg.get("value", 20))))))
+    elif t == "set_pressure_update_rate":
+        _pressure_update_rate = max(0, min(100, int(round(float(msg.get("value", 100))))))
+    elif t == "set_x_tilt":
+        _x_tilt_deg = float(msg.get("value", 0.0))
+    elif t == "set_y_tilt":
+        _y_tilt_deg = float(msg.get("value", 0.0))
+    elif t == "set_effect_enabled":
+        name = msg.get("name")
+        if name in _EFFECT_SWITCHES:
+            _EFFECT_SWITCHES[name] = bool(msg.get("enabled", False))
+            _rebuild_effect_chain()
+            log.info("[effect] %s %s", name, "on" if _EFFECT_SWITCHES[name] else "off")
+    elif t == "set_effect_param":
+        name = msg.get("name")
+        attr = msg.get("attr")
+        if name in _effect_params and attr in _effect_params[name]:
+            _effect_params[name][attr] = msg.get("value")
+            _rebuild_effect_chain()
+    elif t == "set_effect_param_key":
+        # A saved setting's "<effect>_<ATTR>" — both halves may contain "_".
+        for name, params in _effect_params.items():
+            for attr in params:
+                if f"{name}_{attr}" == msg.get("key"):
+                    params[attr] = msg.get("value")
+                    _rebuild_effect_chain()
+    elif t == "set_effects_only":
+        _effects_only = bool(msg.get("enabled", False))
+        log.info("[effect] effects-only %s", "on" if _effects_only else "off")
+    elif t == "replay":
+        rec = msg.get("recording") or {}
+        threading.Thread(
+            target=_replay_recording, args=(rec,), daemon=True
+        ).start()
+    elif t == "pen_test_up":
+        _enqueue_raw((time.monotonic(), "pen_test_up"))
+    elif t == "pen_test_min":
+        _enqueue_raw((time.monotonic(), "pen_test_min"))
+    elif t == "pen_test_max":
+        _enqueue_raw((time.monotonic(), "pen_test_max"))
+    elif t == "connect_plotter":
+        connect_plotter()
+    elif t == "restart_osc":
+        port = msg.get("port")
+        restart_osc_listener(int(port) if port else None)
+    elif t == "quit":
+        request_stop()
+    elif t == "set_paper":
+        return set_paper(float(msg.get("width", 8.5)), float(msg.get("height", 11.0)))
+    elif t == "set_model":
+        return set_model(int(msg.get("model", 1)))
+    elif t == "save_settings":
+        if _settings is not None:
+            _settings.replace(msg.get("values") or {})
+    elif t == "new_drawing":
+        new_drawing()
+    elif t == "save_svg":
+        return _save_svg_reply(msg)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# OSC LISTENER
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# One thread, handling packets in arrival order. iDraw sends every value as
+# its own packet, and the state block only works as a stroke separator if it is
+# handled in order with the points around it — a threaded server can run
+# handlers out of order. The handlers are quick (motion lives on the plotter
+# thread), so one thread keeps up; a bigger receive buffer absorbs bursts.
+
+# listening | port_busy | stopped — for the UI's iPad status button
+osc_status = {"state": "stopped", "port": OSC_PORT, "message": ""}
+last_osc_time: float | None = None   # when any OSC packet last arrived (None = never)
+
+_osc_server: BlockingOSCUDPServer | None = None
+
+
+class _OSCServer(BlockingOSCUDPServer):
+    """The single-threaded OSC server, noting when anything last arrived."""
+
+    def process_request(self, request, client_address):
+        global last_osc_time
+        last_osc_time = time.time()
+        super().process_request(request, client_address)
+
+
+def _set_osc_status(state: str, message: str = "") -> None:
+    osc_status.update(state=state, port=OSC_PORT, message=message)
+    preview.broadcast({"type": "osc_status", **osc_status})
+    level = logging.ERROR if state == "port_busy" else logging.INFO
+    log.log(level, "[osc] %s on port %d%s", state, OSC_PORT, f" — {message}" if message else "")
+
+
+def stop_osc_listener() -> None:
+    global _osc_server
+    if _osc_server is not None:
+        _osc_server.shutdown()
+        _osc_server.server_close()
+        _osc_server = None
+        _set_osc_status("stopped")
+
+
+def restart_osc_listener(port: int | None = None) -> bool:
+    """
+    (Re)open the UDP listener, on a new port if given. Returns False — with
+    osc_status saying why — if the port is taken, typically by another copy of
+    this app or another OSC program.
+    """
+    global _osc_server, OSC_PORT
+    stop_osc_listener()
+    if port:
+        OSC_PORT = port
+    try:
+        server = _OSCServer(("0.0.0.0", OSC_PORT), _build_dispatcher())
+    except OSError as e:
+        _set_osc_status("port_busy", f"port {OSC_PORT} is in use by another program ({e})")
+        return False
+    server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
+    _osc_server = server
+    threading.Thread(target=server.serve_forever, name="osc", daemon=True).start()
+    _set_osc_status("listening")
+    return True
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PAPER AND MACHINE
+# ──────────────────────────────────────────────────────────────────────────────
+
+_axidraw_model   = 1
+_paper_requested = (PAPER_WIDTH_IN, PAPER_HEIGHT_IN)   # what was asked for, before clamping
+
+
+def _plot_busy() -> bool:
+    with _plot_lock:
+        return bool(_plot_deque)
+
+
+def paper_info() -> dict:
+    name, long_in, short_in = AXIDRAW_MODELS[_axidraw_model]
+    return {"type": "paper", "width": PAPER_WIDTH_IN, "height": PAPER_HEIGHT_IN,
+            "requested": list(_paper_requested), "model": _axidraw_model, "model_name": name,
+            "clamped": (PAPER_WIDTH_IN, PAPER_HEIGHT_IN) != tuple(sorted(_paper_requested))}
+
+
+def set_paper(width: float, height: float) -> dict:
+    """
+    Set the paper size (inches, either orientation — it's used portrait),
+    clamped to what the AxiDraw model can reach. Refused mid-plot: the queue
+    was planned for the old paper.
+    """
+    global PAPER_WIDTH_IN, PAPER_HEIGHT_IN, _effect_ctx, _paper_requested
+    if _plot_busy():
+        return {"type": "error", "message": "Finish or discard the current plot before changing the paper."}
+    w, h = sorted((abs(width), abs(height)))
+    if w <= 0:
+        return {"type": "error", "message": "The paper needs a width and a height."}
+    _paper_requested = (w, h)
+    _, long_in, short_in = AXIDRAW_MODELS[_axidraw_model]
+    PAPER_WIDTH_IN, PAPER_HEIGHT_IN = min(w, short_in), min(h, long_in)
+    with _plot_lock:
+        _effect_ctx = postprocess.Ctx(x_max=PAPER_HEIGHT_IN, y_max=PAPER_WIDTH_IN)
+    _update_mapping()
+    info = paper_info()
+    if info["clamped"]:
+        log.warning("[paper] %.2f\" × %.2f\" is larger than the %s reaches; using %.2f\" × %.2f\"",
+                    w, h, info["model_name"], PAPER_WIDTH_IN, PAPER_HEIGHT_IN)
+    else:
+        log.info("[paper] %.2f\" × %.2f\"", PAPER_WIDTH_IN, PAPER_HEIGHT_IN)
+    preview.broadcast(info)
+    return info
+
+
+def set_model(model: int) -> dict:
+    """Set the AxiDraw model; re-applies the paper size against its reach."""
+    global _axidraw_model
+    if model not in AXIDRAW_MODELS:
+        return {"type": "error", "message": f"Unknown AxiDraw model {model}."}
+    if _plot_busy():
+        return {"type": "error", "message": "Finish or discard the current plot before changing the model."}
+    changed = model != _axidraw_model
+    _axidraw_model = model
+    log.info("[axidraw] model %d: %s", model, AXIDRAW_MODELS[model][0])
+    info = set_paper(*_paper_requested)
+    if changed and plotter_status["state"] == "connected":
+        connect_plotter()        # reconnect so pyaxidraw applies the model's limits
+    return info
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# THE SESSION: recording, autosave, saving
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# The drawing is recorded here, in Python, from the same messages the page
+# gets — so closing or reloading the page loses nothing. autosave.svg in the
+# drawings folder is rewritten every couple of seconds while drawing. A clean
+# exit, or "New drawing", saves the session under its own name and removes
+# autosave.svg; so an autosave.svg found at startup means the last session
+# didn't end cleanly, and it's kept as recovered-<time>.svg.
+
+APP_VERSION = "dev"          # set by main() from pyproject.toml
+AUTOSAVE_NAME = "autosave.svg"
+
+_recorder = recording.Recorder()
+_drawings_dir = None         # pathlib.Path, set by start()
+_settings = None             # PantographApp.settings.Settings, set by start()
+
+
+def _autosave() -> None:
+    if _drawings_dir is None or not _recorder.dirty:
+        return
+    _recorder.dirty = False
+    if not _recorder.is_empty():
+        recording.write_atomic(_drawings_dir / AUTOSAVE_NAME, _recorder.svg())
+
+
+def _autosave_thread():
+    while not _stop_event.wait(2.0):
+        try:
+            _autosave()
+        except Exception:            # noqa: BLE001 — keep trying; log why
+            log.exception("[autosave] failed")
+
+
+def _recover_autosave() -> None:
+    f = _drawings_dir / AUTOSAVE_NAME
+    if f.exists():
+        stamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(f.stat().st_mtime))
+        dest = recording.unique_path(_drawings_dir, f"recovered-{stamp}.svg")
+        f.replace(dest)
+        log.warning("[autosave] the last session didn't end cleanly — its drawing is saved as %s", dest.name)
+
+
+def _save_session() -> str | None:
+    """Save the current drawing under a new timestamped name. Returns the name, or None if empty."""
+    if _drawings_dir is None or _recorder.is_empty():
+        return None
+    path = recording.unique_path(_drawings_dir, recording.timestamped_name())
+    recording.write_atomic(path, _recorder.svg())
+    log.info("[drawing] saved  →  %s", path)
+    return path.name
+
+
+def _end_session() -> None:
+    """Shutdown hook: save the drawing, then drop autosave.svg (this was a clean exit)."""
+    _save_session()
+    if _drawings_dir is not None:
+        (_drawings_dir / AUTOSAVE_NAME).unlink(missing_ok=True)
+
+
+def new_drawing() -> None:
+    """Save the current drawing (if any) and start a fresh one, on every open page."""
+    _end_stroke()
+    saved = _save_session()
+    _recorder.clear()
+    if _drawings_dir is not None:
+        (_drawings_dir / AUTOSAVE_NAME).unlink(missing_ok=True)
+    preview.broadcast({"type": "new_drawing", "saved": saved})
+
+
+def _save_svg_reply(msg: dict) -> dict:
+    """The page's "download → svg": build it from the recording and save it."""
+    layers = msg.get("layers") or {}
+    try:
+        svg = _recorder.svg(include_raw=bool(layers.get("raw", True)),
+                            optimized=bool(layers.get("optimized")),
+                            effect=bool(layers.get("effect")))
+        name = str(msg.get("filename") or "drawing.svg")
+        name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name.split("/")[-1].split("\\")[-1])
+        path = recording.unique_path(_drawings_dir, name or "drawing.svg")
+        recording.write_atomic(path, svg)
+        log.info("[drawing] saved  →  %s", path)
+        return {"type": "saved", "ok": True, "path": path.name}
+    except Exception as exc:         # noqa: BLE001 — reported to the page
+        log.exception("[drawing] save failed")
+        return {"type": "saved", "ok": False, "error": str(exc)}
+
+
+def _hello() -> dict:
+    """Everything a page needs when it connects: settings, the drawing so far, statuses."""
+    return {
+        "type":           "hello",
+        "version":        APP_VERSION,
+        "settings":       dict(_settings.values) if _settings is not None else {},
+        "drawing":        _recorder.messages(),
+        "plotter_status": dict(plotter_status),
+        "osc_status":     dict(osc_status),
+        "paper":          paper_info(),
+        "lag":            round(_current_lag_sec, 2),
+    }
+
+
+def _apply_setting(msg: dict) -> None:
+    """Put one saved setting into effect, exactly as if the page had sent it."""
+    if msg["type"] == "set_flip_x":
+        preview.flip_x = msg["enabled"]
+    elif msg["type"] == "set_flip_y":
+        preview.flip_y = msg["enabled"]
+    else:
+        _handle_preview_message(msg)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# START / STOP
+# ──────────────────────────────────────────────────────────────────────────────
+
+_stop_event    = threading.Event()   # set to end main()'s wait: Quit button, signals
+_shutdown_lock = threading.Lock()
+_shutdown_done = False
+_shutdown_hooks: list = []           # extra cleanup run by shutdown(), e.g. forgetting instance.json
+
+
+def request_stop() -> None:
+    """Ask main() to shut the app down (the Quit button). Safe from any thread."""
+    _stop_event.set()
+
+
+def start(ui_ports=preview.DEFAULT_PORTS, drawings_dir=None, settings=None) -> str:
+    """
+    Start the engine: preview server, background threads, OSC listener. Returns
+    immediately with the UI's URL; everything runs on background threads, so
+    the caller's (main) thread stays free — Option 1B's window will need it.
+    """
+    global _plotter_thread_handle, _drawings_dir, _settings
+    from pathlib import Path
+
+    # Initial mapping from the default canvas size; recomputed as soon as iDraw
+    # sends its real canvas dimensions.
+    state["_mapping"] = compute_mapping(state["canvasWidth"], state["canvasHeight"])
+
+    # Saved settings first, so the plotter starts configured even with no page open.
+    _settings = settings
+    if settings is not None:
+        from PantographApp.settings import engine_messages
+        for m in engine_messages(settings.values):
+            _apply_setting(m)
+
+    if drawings_dir is not None:
+        _drawings_dir = Path(drawings_dir)
+        _drawings_dir.mkdir(parents=True, exist_ok=True)
+        _recover_autosave()
+    preview.add_listener(_recorder.on_message)
+    preview.register_hello_provider(_hello)
+
+    ui_port = preview.start(ports=ui_ports, save_dir=drawings_dir)
+    preview.register_message_callback(_handle_preview_message)
+
+    # Plotter separate from OSC, so motors never block reception.
+    _plotter_thread_handle = threading.Thread(target=_plotter_thread, name="plotter", daemon=True)
+    _plotter_thread_handle.start()
+    threading.Thread(target=_pen_rest_thread,      name="pen-rest", daemon=True).start()
+    threading.Thread(target=_optimizer_thread,     name="optimizer", daemon=True).start()
+    threading.Thread(target=_lag_broadcast_thread, name="lag",       daemon=True).start()
+    if _drawings_dir is not None:
+        threading.Thread(target=_autosave_thread, name="autosave", daemon=True).start()
+        _shutdown_hooks.append(_end_session)
+
+    restart_osc_listener()
+    return f"http://127.0.0.1:{ui_port}"
+
+
+def shutdown() -> None:
+    """
+    Stop everything and leave the AxiDraw safe: pen up, motors released so the
+    carriage can be pushed home by hand. Runs once, however many exit paths
+    call it, and from whichever thread calls it first.
+
+    The machine is made safe *first*. Closing the console window gives this a
+    few seconds before Windows ends the process, so saving the drawing and
+    closing the servers come after (if they're cut short, the autosave from a
+    moment ago is recovered on the next launch).
+    """
+    global _shutdown_done
+    with _shutdown_lock:
+        if _shutdown_done:
+            return
+        _shutdown_done = True
+
+        log.info("[shutdown] lifting pen, disabling XY motors, and disconnecting...")
+        _stop_event.set()
+        stop_osc_listener()
+
+        # Let the plotter finish the command it's on, then take the USB link over.
+        _plotter_stop.set()
+        if _plotter_thread_handle is not None:
+            _plotter_thread_handle.join(timeout=2)
+        with _plot_lock:
+            _plot_deque.clear()
+        if _ad:
+            _make_axidraw_safe(_ad)
+
+        preview.stop()
+        for hook in _shutdown_hooks:
+            try:
+                hook()
+            except Exception:        # noqa: BLE001 — a failed save mustn't stop the rest
+                log.exception("[shutdown] hook failed")
+
+
+def _make_axidraw_safe(ad) -> None:
+    """Pen up and XY motors off, on the connection that's already open (fast)."""
+    released = False
+    try:
+        ad.penup()
+        ad.block()                   # wait for the lift to finish before cutting the motors
+        from plotink import ebb_motion
+        ebb_motion.sendDisableMotors(ad.plot_status.port, False)
+        released = True
+    except Exception as e:           # noqa: BLE001
+        log.warning("[axidraw] couldn't release the motors directly (%s); trying a fresh connection", e)
+    _close_axidraw(ad)
+    if not released:
+        # The slow way: a fresh connection running pyaxidraw's manual
+        # "disable_xy" command. (This used to run mode "res_home2", which
+        # pyaxidraw doesn't have: it did nothing, and the motors stayed on.)
+        try:
+            from pyaxidraw import axidraw as _axi_mod
+            disarm = _axi_mod.AxiDraw()
+            disarm.plot_setup()
+            disarm.options.mode = "manual"
+            disarm.options.manual_cmd = "disable_xy"
+            disarm.plot_run()
+            released = True
+        except Exception as e:       # noqa: BLE001
+            log.warning("[axidraw] WARNING: could not disengage XY motors (%s)", e)
+    if released:
+        log.info("[axidraw] XY motors disengaged — move carriage home manually")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # ENTRY POINT
 # ──────────────────────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
+def main(argv=None) -> int:
+    global _show_raw_osc, DRY_RUN, OSC_PORT
+
     parser = argparse.ArgumentParser(
         prog="python listen_to_idraw.py",
         description="iDraw OSC → Python → AxiDraw live drawing pipeline.",
@@ -1263,7 +1781,7 @@ if __name__ == "__main__":
         epilog=(
             "examples:\n"
             "  python listen_to_idraw.py              # plot live\n"
-            "  python listen_to_idraw.py --dry-run    # print moves, no USB\n"
+            "  python listen_to_idraw.py --dry-run    # log moves, no USB\n"
             "  python listen_to_idraw.py --raw-osc    # show raw OSC stream"
         ),
     )
@@ -1271,8 +1789,7 @@ if __name__ == "__main__":
         "--raw-osc",
         action="store_true",
         help=(
-            "Print every incoming OSC message verbatim (address + value) "
-            "instead of the normal pipeline output. "
+            "Print every incoming OSC message verbatim (address + value). "
             "Useful for verifying what iDraw OSC is actually sending "
             "and discovering new message addresses."
         ),
@@ -1281,150 +1798,85 @@ if __name__ == "__main__":
         "--dry-run",
         action="store_true",
         help=(
-            "Compute and print all plotter moves without connecting to the AxiDraw. "
-            "Use this to verify coordinate mapping before putting pen to paper."
+            "Never connect to the AxiDraw; plotter moves are logged instead "
+            "(visible with --verbose). Use this to verify coordinate mapping "
+            "before putting pen to paper."
         ),
     )
-    cli = parser.parse_args()
+    parser.add_argument("--no-browser", action="store_true",
+                        help="Don't open the UI in a browser.")
+    parser.add_argument("--port", type=int, metavar="N",
+                        help="Serve the UI on port N only (default: the first free port "
+                             "from 5810 to 5830).")
+    parser.add_argument("--osc-port", type=int, metavar="N",
+                        help=f"Listen for iDraw OSC on port N (default {OSC_PORT}).")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Log every point and plotter move (the old per-point output).")
+    parser.add_argument("--data-dir", metavar="PATH",
+                        help="Keep drawings, settings, logs and runtime files under PATH "
+                             "instead of the usual per-user folders.")
+    cli = parser.parse_args(argv)
     _show_raw_osc = cli.raw_osc
     DRY_RUN       = cli.dry_run
+    if cli.osc_port:
+        OSC_PORT = cli.osc_port
 
-    print("=" * 60)
-    print("  iDraw OSC -> Python -> AxiDraw")
-    print(f"  OSC port     : {OSC_PORT}")
-    print(f"  Paper size   : {PAPER_WIDTH_IN}\" × {PAPER_HEIGHT_IN}\"")
-    print(f"  Min pt dist  : {STREAM_MIN_DIST_IN}\"")
-    print(f"  AxiDraw      : {'DRY RUN' if DRY_RUN else 'ENABLED'}")
-    print(f"  Output mode  : {'RAW OSC' if _show_raw_osc else 'pipeline'}")
+    from PantographApp import shell
+    paths = shell.resolve_paths(cli.data_dir)
+    log_file = shell.setup_logging(paths.logs, verbose=cli.verbose)
+
+    # Already running (say, the launcher was double-clicked twice)? Show that
+    # copy instead of fighting it for the ports.
+    existing = shell.running_instance(paths.runtime)
+    if existing:
+        log.info("Pantograph is already running at %s — opening it.", existing)
+        shell.open_ui(existing, enabled=not cli.no_browser)
+        return 0
+
     _fx = [e.name for e in _effect_chain]
-    print(f"  Effects      : {', '.join(_fx) if _fx else 'none'}")
-    print("=" * 60)
-    print()
-    print("  In iDraw OSC (iPad):")
-    print("    IP   -> your computer's local Wi-Fi IP")
-    print(f"   Port -> {OSC_PORT}")
-    print()
+    log.info("=" * 60)
+    log.info("  Pantograph %s — iDraw OSC -> Python -> AxiDraw", shell.app_version())
+    log.info("  OSC port     : %d", OSC_PORT)
+    log.info("  Paper size   : %s\" × %s\"", PAPER_WIDTH_IN, PAPER_HEIGHT_IN)
+    log.info("  Min pt dist  : %s\"", STREAM_MIN_DIST_IN)
+    log.info("  AxiDraw      : %s", "DRY RUN" if DRY_RUN else "ENABLED")
+    log.info("  Output mode  : %s", "RAW OSC" if _show_raw_osc else "pipeline")
+    log.info("  Effects      : %s", ", ".join(_fx) if _fx else "none")
+    log.info("  Drawings     : %s", paths.drawings)
+    log.info("  Log file     : %s", log_file)
+    log.info("=" * 60)
+    log.info("")
+    log.info("  In iDraw OSC (iPad):")
+    log.info("    IP   -> your computer's local Wi-Fi IP")
+    log.info("    Port -> %d", OSC_PORT)
+    log.info("")
 
-    # Compute initial mapping using default canvas size.
-    # This will be recalculated as soon as real canvas dimensions arrive.
-    state["_mapping"] = compute_mapping(state["canvasWidth"], state["canvasHeight"])
-
-    # Start preview server (opens browser)
-    preview.start(open_browser=True)
-
-    # Register callback so browser control messages reach the plotter and optimizer
-    def _handle_preview_message(msg):
-        global _opt_enabled, _opt_scale, _lag_threshold_sec, _limit_lag, _min_dist_in, \
-               _variable_pressure, _pen_pos_up, _pen_down_min, _pen_down_max, _pressure_update_rate, \
-               _x_tilt_deg, _y_tilt_deg, _effects_only
-        t = msg.get("type")
-        if t == "home":
-            _enqueue_raw((time.monotonic(), "home"))
-            if not _show_raw_osc:
-                print("[axidraw] home queued — will execute after current commands")
-        elif t == "set_opt_enabled":
-            _opt_enabled = bool(msg.get("enabled", True))
-        elif t == "set_opt_scale":
-            _opt_scale = float(msg.get("value", 0.5))
-        elif t == "set_lag_threshold":
-            _lag_threshold_sec = max(0.1, float(msg.get("value", 3.0)))
-        elif t == "set_limit_lag":
-            _limit_lag = bool(msg.get("enabled", True))
-        elif t == "set_min_dist":
-            _min_dist_in = max(0.001, float(msg.get("value", STREAM_MIN_DIST_IN)))
-        elif t == "set_variable_pressure":
-            _variable_pressure = bool(msg.get("enabled", False))
-        elif t == "set_pen_up_pos":
-            _pen_pos_up = max(0, min(100, int(round(float(msg.get("value", 60))))))
-        elif t == "set_pen_down_min":
-            _pen_down_min = max(0, min(100, int(round(float(msg.get("value", 40))))))
-        elif t == "set_pen_down_max":
-            _pen_down_max = max(0, min(100, int(round(float(msg.get("value", 20))))))
-        elif t == "set_pressure_update_rate":
-            _pressure_update_rate = max(0, min(100, int(round(float(msg.get("value", 100))))))
-        elif t == "set_x_tilt":
-            _x_tilt_deg = float(msg.get("value", 0.0))
-        elif t == "set_y_tilt":
-            _y_tilt_deg = float(msg.get("value", 0.0))
-        elif t == "set_effect_enabled":
-            name = msg.get("name")
-            if name in _EFFECT_SWITCHES:
-                _EFFECT_SWITCHES[name] = bool(msg.get("enabled", False))
-                _rebuild_effect_chain()
-                if not _show_raw_osc:
-                    print(f"[effect] {name} {'on' if _EFFECT_SWITCHES[name] else 'off'}")
-        elif t == "set_effect_param":
-            name = msg.get("name")
-            attr = msg.get("attr")
-            if name in _effect_params and attr in _effect_params[name]:
-                _effect_params[name][attr] = msg.get("value")
-                _rebuild_effect_chain()
-        elif t == "set_effects_only":
-            _effects_only = bool(msg.get("enabled", False))
-            if not _show_raw_osc:
-                print(f"[effect] effects-only {'on' if _effects_only else 'off'}")
-        elif t == "replay":
-            rec = msg.get("recording") or {}
-            threading.Thread(
-                target=_replay_recording, args=(rec,), daemon=True
-            ).start()
-        elif t == "pen_test_up":
-            _enqueue_raw((time.monotonic(), "pen_test_up"))
-            if not _show_raw_osc:
-                print("[axidraw] pen test up queued")
-        elif t == "pen_test_min":
-            _enqueue_raw((time.monotonic(), "pen_test_min"))
-            if not _show_raw_osc:
-                print("[axidraw] pen test down-min queued")
-        elif t == "pen_test_max":
-            _enqueue_raw((time.monotonic(), "pen_test_max"))
-            if not _show_raw_osc:
-                print("[axidraw] pen test down-max queued")
-
-    preview.register_message_callback(_handle_preview_message)
-
-    # Start plotter thread (separate from OSC so motors never block reception)
-    threading.Thread(target=_plotter_thread,       daemon=True).start()
-
-    # Rests the pen (lifts it, stroke still open) when the point stream pauses
-    threading.Thread(target=_pen_rest_thread,      daemon=True).start()
-
-    # Optimizer: adapts RDP aggressiveness based on queue lag
-    threading.Thread(target=_optimizer_thread,     daemon=True).start()
-
-    # Lag broadcaster: sends current lag to the browser every 500 ms
-    threading.Thread(target=_lag_broadcast_thread, daemon=True).start()
-
-    # Start OSC listener — blocks until Ctrl+C.
-    # One thread, handling packets in arrival order. iDraw sends every value as
-    # its own packet, and the state block only works as a stroke separator if it
-    # is handled in order with the points around it — a threaded server can run
-    # handlers out of order. The handlers are quick (motion lives on the plotter
-    # thread), so one thread keeps up; a bigger receive buffer absorbs bursts.
-    dispatcher = _build_dispatcher()
-    server = BlockingOSCUDPServer(("0.0.0.0", OSC_PORT), dispatcher)
-    server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
-    print(f"[osc] Listening on 0.0.0.0:{OSC_PORT} ...")
+    global APP_VERSION
+    APP_VERSION = shell.app_version()
+    from PantographApp.settings import Settings
+    ui_ports = [cli.port] if cli.port else preview.DEFAULT_PORTS
     try:
-        server.serve_forever()
+        url = start(ui_ports=ui_ports, drawings_dir=paths.drawings, settings=Settings(paths.config))
+    except RuntimeError as e:
+        log.error("Can't start: %s", e)
+        return 1
+    shell.record_instance(paths.runtime, preview.port)
+    _shutdown_hooks.append(lambda: shell.forget_instance(paths.runtime))
+    shell.install_exit_handlers(shutdown)
+    shell.open_ui(url, enabled=not cli.no_browser)
+    log.info("[ui] %s", url)
+
+    try:
+        # A timed wait, not a bare wait(): Ctrl+C only interrupts the main
+        # thread between waits on Windows.
+        while not _stop_event.wait(0.5):
+            pass
     except KeyboardInterrupt:
         pass
     finally:
-        print("\n[shutdown] lifting pen, disabling XY motors, and disconnecting...")
-        if _ad:
-            try:
-                _ad.penup()
-                _ad.disconnect()
-            except Exception:
-                pass
-            # Re-connect briefly in res_home2 mode: raises pen and disengages
-            # XY stepper motors so the carriage can be moved home manually.
-            try:
-                from pyaxidraw import axidraw as _axi_mod
-                _disarm = _axi_mod.AxiDraw()
-                _disarm.plot_setup()
-                _disarm.options.mode = "res_home2"
-                _disarm.plot_run()
-                print("[axidraw] XY motors disengaged — move carriage home manually")
-            except Exception as _e:
-                print(f"[axidraw] WARNING: could not disengage XY motors ({_e})")
+        shutdown()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

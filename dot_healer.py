@@ -71,7 +71,7 @@ from pathlib import Path
 
 # Reuse the pipeline's exact SVG parse/serialize so the healed file round-trips
 # in the same format everything else in draw2axi speaks.
-from svg_transform import load_svg, build_svg
+from recording import build_svg, load_svg
 
 
 # Fraction of the canvas diagonal used as the default max hand-off gap when the

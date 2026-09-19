@@ -1,0 +1,31 @@
+[project]
+name = "pantograph"
+version = "0.1.0"
+description = "Draw on an iPad, plot live on an AxiDraw."
+readme = "README.md"
+license = "MIT"
+# pyaxidraw is only tested up to Python 3.12.
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "python-osc",
+    "websockets>=13",
+    "numpy",
+    "rdp",
+    "platformdirs",
+    # The AxiDraw Python API. Its distribution is named `axicli`; it provides
+    # the `pyaxidraw` module, which needs `axidrawinternal`. Both are installed
+    # from PantographApp/vendor/ (see the README there for why).
+    "axicli",
+    "axidrawinternal",
+]
+
+[dependency-groups]
+dev = ["pytest", "playwright"]
+
+[tool.uv]
+# An application, not a library: nothing to build or install for the project itself.
+package = false
+
+[tool.uv.sources]
+axicli          = { path = "PantographApp/vendor/AxiDraw_API_396" }
+axidrawinternal = { path = "PantographApp/vendor/axidrawinternal-3.9.6-py2.py3-none-any.whl" }

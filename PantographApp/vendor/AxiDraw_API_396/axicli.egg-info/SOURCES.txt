@@ -1,0 +1,15 @@
+README.txt
+pyproject.toml
+setup.py
+axicli/__init__.py
+axicli/__main__.py
+axicli/axidraw_cli.py
+axicli/utils.py
+axicli.egg-info/PKG-INFO
+axicli.egg-info/SOURCES.txt
+axicli.egg-info/dependency_links.txt
+axicli.egg-info/entry_points.txt
+axicli.egg-info/requires.txt
+axicli.egg-info/top_level.txt
+pyaxidraw/__init__.py
+pyaxidraw/axidraw.py
