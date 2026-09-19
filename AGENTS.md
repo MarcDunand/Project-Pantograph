@@ -69,7 +69,9 @@ last meaningful field in the burst).
 **Pressure quirks.** Raw pressure runs 0 → `OSC_PRESSURE_MAX` (4.166666507720947,
 Apple Pencil at full press); finger input reports a constant value. iDraw also
 intermittently sends a raw value of *exactly* `1.0` as a placeholder — it is not
-a real reading, and the pipeline treats it as spurious. See README § Pressure.
+a real reading, and the pipeline treats it as spurious. It also sends `1.0` on
+*every* point when it has no pressure data at all (seen 2026-09-18). Runs of 5+
+are plotted at 0.5 rather than dropped. See README § Pressure.
 
 ### 3.2 Canvas dimensions
 
@@ -106,13 +108,18 @@ currently skipped — no physical erasing on the AxiDraw.
 ### 3.4 Stroke boundary inference
 
 iDraw OSC does **not** send explicit strokeStart / strokeEnd / penUp / penDown
-messages. Stroke boundaries are inferred by time gap: if no new point arrives
-within `PEN_UP_TIMEOUT_SEC` (currently 0.15s), that is treated as a pen lift.
+messages. It does send the **state block** (§3.3 fields plus canvas size, in
+the order `/r /g /b /a`, tool flags, `/canvasWidth`, `/canvasHeight`,
+`/drawingWidth`, `/eraserWidth`) before every new stroke. Since 2026-09-18 that
+block is the stroke boundary. This is taken from Marc's `--raw-osc` captures
+and his testing; rapid taps can produce several blocks in a row with no points
+between them. See README § Stroke boundaries.
 
-This is an inference, not a fact, and it has a known failure mode: dragging the
-Pencil fast enough that consecutive points arrive more than the timeout apart
-chops one continuous line into a run of single-point strokes. `dot_healer.py`
-repairs an SVG that has been damaged this way.
+**History:** boundaries used to be inferred from a time gap
+(`PEN_UP_TIMEOUT_SEC`, 0.15s). That had a known failure mode: dragging the
+Pencil fast enough that consecutive points arrived more than the timeout apart
+chopped one continuous line into a run of single-point strokes. `dot_healer.py`
+repairs SVGs recorded that way.
 
 ---
 

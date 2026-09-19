@@ -5,9 +5,13 @@ Repair strokes that a too-fast pen tore into a trail of dots.
 
 THE BUG THIS FIXES
 ------------------
-listen_to_idraw infers stroke boundaries from *time*: if the gap between two
-received OSC points exceeds PEN_UP_TIMEOUT_SEC, it assumes the pen lifted and
-ends the stroke. When the Pencil is dragged quickly, iDraw sends points far
+(Fixed at the source on 2026-09-18: listen_to_idraw now splits strokes at
+iDraw's per-stroke state block instead of by timing. This tool remains for
+drawings recorded before that.)
+
+listen_to_idraw used to infer stroke boundaries from *time*: if the gap between
+two received OSC points exceeded PEN_UP_TIMEOUT_SEC, it assumed the pen lifted
+and ended the stroke. When the Pencil is dragged quickly, iDraw sends points far
 enough apart in time that this timeout fires between *consecutive* points — so a
 single continuous line gets chopped into a run of one-point strokes. In the
 plot SVG those one-point strokes render as `<circle>` dots, while the slower

@@ -311,10 +311,25 @@ Paper size lives at the top of `listen_to_idraw.py` (`PAPER_WIDTH_IN`,
 
 ### Stroke boundaries
 
-iDraw OSC sends no pen-up/pen-down messages. A gap of `PEN_UP_TIMEOUT_SEC`
-(0.15s) with no new point is treated as a pen lift, enforced both inline and by
-a watchdog thread so the last stroke of a session always closes. A stroke with
-no movement in it is plotted as a dot (`dot_dwell`).
+iDraw OSC sends no pen-up/pen-down messages, but it does send a **state
+block** (`/r /g /b /a`, the tool flags, `/canvasWidth`, `/canvasHeight`,
+`/drawingWidth`, `/eraserWidth`) before every new stroke. That block, not
+timing, is what ends one stroke and starts the next. Any point that arrives
+while a stroke is open belongs to it, however long the pause before it, so a
+fast stroke can no longer tear into dots.
+
+Timing only *rests* the pen. After `PEN_REST_SEC` (0.15s) with no new point, a
+watchdog thread lifts the pen so it doesn't sit on the paper bleeding ink, but
+the stroke stays open. If the stroke carries on, the lift is taken back out of
+the queue when the plotter hasn't reached it yet (the usual case, since the
+plotter runs behind), or the pen goes back down where it left off.
+
+Because iDraw sends nothing when the Pencil lifts, the *latest* stroke stays
+open until the next one begins. Its pen is already off the paper, but the
+effects that act at a stroke's end (zigzag's last corner, pressure hatch,
+stroke connector) run when the next stroke starts. A stroke with no movement
+in it is plotted as a dot (`dot_dwell`). OSC is received on a single thread, so
+messages are handled in the order they arrive, which this relies on.
 
 ### Plot command stream
 
@@ -355,10 +370,16 @@ Raw iDraw pressure is normalised by `OSC_PRESSURE_MAX` (≈4.167). With **variab
 pressure** on, normalised pressure maps between the min and max pen-down servo
 positions, updated mid-stroke at the configured rate.
 
-iDraw intermittently sends a placeholder raw value of exactly `1.0`
-(normalising to ≈0.24). Those points are buffered and given pressures linearly
-interpolated between their good neighbours; a stroke where *every* point is
-spurious is discarded before `pendown` is ever issued, so no ink lands.
+iDraw sends a placeholder raw value of exactly `1.0` (normalising to ≈0.24)
+when it has no real reading. On its own, or in a short run, it's a glitch:
+those points are buffered and given pressures linearly interpolated between
+their good neighbours.
+
+A run of `NO_PRESSURE_RUN` (5) or more placeholders means iDraw has no pressure
+data at all (a finger, or a Pencil it isn't reading). The run is plotted at
+`NO_PRESSURE_VALUE` (0.5 on the 0–1 scale). A whole stroke of placeholders too
+short to reach 5 (a finger tap) gets the same value when it ends. Such strokes
+used to be discarded; since 2026-09-19 they plot.
 
 ### Tilt compensation
 
@@ -474,3 +495,9 @@ above.
 - Only needs `python-osc` and `websockets` — no `rdp`, `numpy`, or `pyaxidraw`.
 - Its recording output must stay byte-compatible with what the full version
   reads back — see the sync warning in `iDraw_to_svg/README.md`.
+
+---
+
+## License
+
+The code in this repository is released under the [MIT License](LICENSE).

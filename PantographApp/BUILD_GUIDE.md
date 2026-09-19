@@ -5,8 +5,56 @@ plus every known gotcha and how each is handled. It is written for whoever
 builds it (Marc, or a Claude session). Work through the phases in order. Each
 phase ends with a checkpoint, and nothing moves on until that checkpoint passes.
 
-Status: **planning.** Nothing below has been built yet. Tick the boxes as
-phases land.
+Status: **Phase −1 done and confirmed by Marc (2026-09-19). Phase 0 is next.**
+Nothing from Phase 0 onwards has been built yet. Tick the boxes as phases
+land.
+
+---
+
+## Phase −1: Stroke boundaries from iDraw's state block (done first, by request)
+
+Marc asked for this to be the first code change, confirmed working in the
+plain `python listen_to_idraw.py` version before anything else proceeds.
+
+- [x] Strokes end only when iDraw's **state block** arrives (any of `/r /g /b
+      /a`, the tool flags, `/canvasWidth`, `/canvasHeight`, `/drawingWidth`,
+      `/eraserWidth`), or where a replayed recording's stroke ends. Timing no
+      longer splits strokes (`_state_block_seen`, `_end_stroke`).
+- [x] Timing only **rests** the pen: after `PEN_REST_SEC` (0.15 s) without a
+      point, it lifts the pen, bypassing the effects. If the stroke continues,
+      the lift is taken back out of the queue if it hasn't been executed, or
+      the pen is lowered again at the same spot (`_maybe_rest_pen`,
+      `_resume_after_rest`).
+- [x] **Single-threaded OSC** (`BlockingOSCUDPServer` with a 1 MB receive
+      buffer). This had to land together with the block logic, which depends
+      on messages being handled in order (§2.12). It was pulled forward from
+      Phase 1.
+- [x] Docs updated: README § Stroke boundaries, AGENTS.md §3.4, and the
+      `dot_healer.py` docstring.
+- [x] **No-pressure input plots instead of vanishing** (G-35): 5+ placeholder
+      `1.0` values in a row are plotted at pressure 0.5, and a shorter all-`1.0`
+      stroke gets 0.5 when it ends. Simulated: finger stroke, short finger
+      stroke, finger tap, a glitch inside real pressure (still interpolated), a
+      long run inside real pressure (0.5). All pass.
+- [x] Simulation against the real handlers passes: the block splits strokes,
+      a pause doesn't, a rest is taken back or re-lowered, taps dwell once,
+      replay stays separate, and 120 fast points over real UDP arrive in
+      order.
+- [x] **Marc confirmed it works (2026-09-19).** What was checked:
+  - fast strokes stay continuous (no dots);
+  - separate strokes still lift between them;
+  - pausing mid-stroke lifts the pen, and it continues the line when you
+    carry on;
+  - taps still make dots;
+  - effects still work;
+  - finger strokes (or any with `p=0.24` on every point) now plot.
+- **Known consequence:** iDraw sends nothing on lift, so the *latest* stroke
+  stays open until the next one starts. The pen is already rested, but
+  stroke-end effects and the preview's pen_up run then. If this matters, a
+  long idle timeout (say 2 s) could close the stroke; that would be a timing
+  rule, but it would never split a continuous stroke.
+- `iDraw_to_svg/` still uses the old timing rule. It's being deleted in
+  Phase 4, so it was left alone.
 
 ---
 
@@ -36,6 +84,15 @@ tool:
 | Layout | Pipeline Python stays at the **repo root**. App-specific files go in **`PantographApp/`**. No file moves; we build in place. |
 | Ports | The web page and the live WebSocket feed merge onto **one port**. |
 | `iDraw_to_svg/` | Merged away. "No plotter" becomes a status, not a second program. |
+| Name | **Pantograph** for the launcher, the data folders and the window/tab title. |
+| Drawings folder | Defaults to `Documents/Pantograph/` (can be changed in settings). The repo's `saved_drawings/` **stays in git** as documentation, and the app just doesn't write there. |
+| SVG / canvas look | **White background, strokes in greyscale** (each stroke's recorded colour turned into grey), matching how iDraw OSC looks. Used for every export and for the live canvas, so the whole app looks the same. |
+| Paper size + AxiDraw model | Saved settings, like x/y tilt, editable in the Plot tab. |
+| `python svg_transform.py` | Opens the app's **Tools** tab with that file loaded (chosen because it looks consistent with the rest of the app). The tkinter window is removed. |
+| Connection status | Clickable **iPad** and **Plotter** status buttons are always on screen, showing the state and offering reconnect/help. |
+| OSC input | Switches to a **single thread**, so messages are handled in the order they arrive (§2.12). |
+| Licence | **MIT.** `LICENSE` added at the repo root on 2026-09-18, plus a README line. It covers the code. |
+| Platforms, fine print | Windows x64 and Macs (Apple Silicon, plus Intel on a recent macOS). **Windows on ARM is not specifically handled.** It's rare, and the risk is low (§11 Q8). Revisit only if a user reports it. |
 
 **What doesn't change:** the drawing pipeline itself. Stroke inference,
 spurious-pressure handling, mapping, the optimizer, effects and replay keep
@@ -63,12 +120,15 @@ that the app would make worse if left alone.
    `ws://localhost:5001` and send `replay`, `home` or pen commands.
    → **Phase 2 adds Origin and Host checks.**
 3. **pyaxidraw only supports Python 3.8–3.12** according to its install docs.
-   uv would otherwise pick the newest Python.
+   Its package metadata only says `>=3.8`, but the docs list what's actually
+   tested. uv would otherwise pick the newest Python.
    → **Pin Python 3.12 in `.python-version`.**
 4. **pyaxidraw's download URL is unversioned**
    (`https://cdn.evilmadscientist.com/dl/ad/public/AxiDraw_API.zip`). `uv.lock`
    records a hash of that file. When Evil Mad Scientist publishes a new
-   version, every new install fails with a hash mismatch.
+   version, every new install fails with a hash mismatch. (As of 2026-09-18 the
+   URL serves version 3.9.6, dated 2023-12-12, licensed **GPL-2.0 or later**
+   per `pyaxidraw/LICENSE.txt` and the file headers.)
    → **Host a fixed copy** (see G-12 and question Q6).
 5. **The plotter connects only once, at startup.**
    - `from pyaxidraw import axidraw` sits *outside* the `try` in
@@ -97,15 +157,24 @@ that the app would make worse if left alone.
 11. **`__pycache__/` files are committed, and there is no `.gitignore`.** uv
     will add a `.venv/`.
     → **Phase 0.**
-12. **Possible latent bug, out of scope, flagged only.** The OSC listener is a
-    `ThreadingOSCUDPServer`, which handles every UDP packet on its own thread.
-    iDraw sends `/x`, `/pressure` and `/y` as separate messages, so their
-    handlers can race: `/y` could be handled before the matching `/x` and plot
-    a point with a stale x. A single-threaded `BlockingOSCUDPServer` would
-    preserve order, since the handlers are fast. This would be a behaviour
-    change, so it isn't part of this build (see Q7). It could be related to
-    glitches like the torn-dot strokes that `dot_healer` repairs, but that's
-    unproven.
+12. **OSC messages can be handled out of order.** The OSC listener is a
+    `ThreadingOSCUDPServer` (`listen_to_idraw.py`, at the entry point), which
+    starts a new thread for every UDP packet. iDraw sends `/x`, `/pressure` and
+    `/y` as separate packets, so their handlers can race: `/y` could be handled
+    before the matching `/x` and plot a point with a stale x.
+
+    There's no need for threads here:
+    - the handlers only store a value, or push a command onto the queue and
+      broadcast it;
+    - the slow work (plotter motion) already runs on its own thread;
+    - the broadcast doesn't block.
+
+    The one slow part inside a handler, printing every point to the console,
+    goes away with §2.6.
+
+    **Decision:** switch to `BlockingOSCUDPServer`, which is single-threaded
+    and keeps messages in order, as its own commit in Phase 1 with before and
+    after testing. Whether this contributed to past glitches is unproven.
 
 ---
 
@@ -152,7 +221,8 @@ iPad (iDraw OSC) ──UDP :8800──► listen_to_idraw.py  (engine, backgroun
                        live recorder, load, save/build SVG, thumbnails
   postprocess.py       unchanged
   svg_transform.py     functions unchanged; load_svg/build_svg re-exported from
-                       recording.py; tkinter GUI kept for the old command only
+                       recording.py; tkinter GUI removed; the command now
+                       opens the app's Tools tab
   dot_healer.py        unchanged apart from importing from recording.py
   pyproject.toml NEW   dependencies (shared by plain-Python runs and the app)
   uv.lock        NEW   exact pinned versions + hashes
@@ -225,6 +295,18 @@ All in `listen_to_idraw.py`. The drawing logic is untouched.
       `sys.exit(main())`.
 - [ ] Run the OSC server on a background thread. Keep the server object so
       that `shutdown()` can stop it.
+- [x] **Single-threaded OSC (§2.12): done early, in Phase −1.** Swap
+      `ThreadingOSCUDPServer` for `BlockingOSCUDPServer`.
+  - Before and after the swap, run the Phase 0 end-to-end test, then do a
+    fast-scribble session on the real iPad and compare the results.
+  - Make sure no handler does slow work, especially console printing.
+  - Set a larger socket receive buffer (`SO_RCVBUF`, e.g. 1 MB) so a brief
+    stall can't drop packets.
+- [ ] `restart_osc_listener(port=None)` closes and re-opens the UDP socket.
+      It's used by the iPad status button ("Restart listener") and when the
+      OSC port setting changes.
+- [ ] Track `last_osc_time` so the UI can tell three iPad states apart:
+      *never heard*, *receiving*, and *quiet for a while*.
 - [ ] Add a `stop_event`. `main()` starts everything, calls
       `shell.open_ui(url)`, then waits on `stop_event`. The main thread stays
       free for 1B.
@@ -282,6 +364,10 @@ All in `preview.py` and `PantographApp/shell.py`.
 - [ ] **Security:**
   - Reject WebSocket handshakes whose `Origin` isn't
     `http://127.0.0.1:<port>` or `http://localhost:<port>`.
+  - Handshakes with **no** `Origin` header are allowed. Browsers always send
+    one, so a missing header means another local program, which already runs
+    as the user and could do anything anyway. This is how the second launch
+    and the `svg_transform.py` command talk to a running copy.
   - Reject HTTP requests whose `Host` header isn't one of those (this blocks
     DNS-rebinding attacks).
   - In 1B the webview loads the same URL, so the checks still pass.
@@ -293,6 +379,9 @@ All in `preview.py` and `PantographApp/shell.py`.
   - If `GET /health` answers there, another copy is already running: open the
     browser to it and exit. This also covers users double-clicking the
     launcher twice.
+  - If the second launch came with a file to open (for example
+    `python svg_transform.py drawing.svg`), it first sends
+    `open_file {path, tab}` to the running copy over `/ws`, then exits.
   - Otherwise, write the file and continue.
 - [ ] Replace the `POST /save` endpoint with a `save_png` WebSocket message.
       SVG export moves to Python in Phase 3; PNG still renders from the
@@ -330,9 +419,17 @@ This is the most important structural change. Read §2 items 1 and 10 first.
     `version: 1`, the same stroke fields, and points as
     `[t, x, y, pressureRaw]` with unrounded floats. Old SVGs must load, and
     new SVGs must load in old copies of the code.
-  - Pick **one** visual style for exported SVGs and use it everywhere: the
-    live export, the tools output and the CLI tools. Record the choice here
-    (see Q3).
+  - **One visual style for every exported SVG** (decided; see Q3): the live
+    export, the tools output and the CLI tools all use it.
+    - White background.
+    - Raw strokes in **greyscale**: each stroke's recorded
+      `color {r,g,b,a}` becomes its luminance grey
+      (`0.2126 R + 0.7152 G + 0.0722 B`), keeping alpha. That matches iDraw
+      OSC's look.
+    - The optional optimized and effect layers keep one accent colour each
+      (from the UI palette, readable on white).
+    - Only the visuals change. The recording in `<metadata>` still stores the
+      original colour.
 - [ ] **Autosave:** after every pen-up (debounced to at most one write every
       2 s), write the current session to `autosave/current.svg` under the
       drawings folder.
@@ -350,13 +447,28 @@ This is the most important structural change. Read §2 items 1 and 10 first.
   - debounced saves while sliders are dragged.
 
   It covers everything that's in `localStorage` today (the `axi_*` keys and
-  the `axi_fx_*` effect keys), plus the OSC port and paper settings. The
+  the `axi_fx_*` effect keys), plus the OSC port and the paper settings. The
   server applies the settings on startup, **before** any browser connects, so
   the plotter is configured correctly even with no tab open. Browser storage
   is kept only for UI-only preferences, such as which tab was open.
+- [ ] **Paper size and AxiDraw model are saved settings** (decided; see Q4),
+      replacing the hard-coded `PAPER_WIDTH_IN` / `PAPER_HEIGHT_IN`.
+  - Presets: Letter, A4, A3, Tabloid, plus Custom (width × height in
+    inches or mm).
+  - Model presets set the machine's travel limits. Paper larger than the
+    machine can reach is clamped, with a visible warning.
+  - Changing either setting recomputes the mapping and rebuilds the effect
+    context (`Ctx(x_max, y_max)`) and the tilt centre. That's all state
+    derived from the paper constants today, so every place that reads those
+    constants needs finding and converting to the setting.
+  - Changes are refused while the plot queue isn't empty ("Finish or discard
+    the current plot first").
+  - Pass the model to pyaxidraw (`ad.options.model`) so its own travel limits
+    match.
 - [ ] Data folders, via `platformdirs` (see G-15). Drawings go to
-      `Documents/Pantograph/`, using the real Documents folder even when
-      OneDrive redirects it.
+      `Documents/Pantograph/` by default, using the real Documents folder even
+      when OneDrive redirects it. This is a setting, and `--data-dir` overrides
+      it. The repo's `saved_drawings/` isn't touched and stays in git.
 - [ ] The `hello` message on connect contains:
   - the settings and effect specs;
   - the current drawing (all three layers);
@@ -399,17 +511,72 @@ are easy to spot.
 - [ ] **5b, redesign:**
   - **Top bar:**
     - app name;
-    - **iPad** status dot (waiting / receiving; turns green on the first OSC
-      message);
-    - **Plotter** status dot, with Connect / Reconnect;
+    - **iPad** and **Plotter** status buttons (detailed below);
     - the IP:port for iDraw, in large, copyable text;
     - lag readout;
     - **Quit**.
-  - **Center:** the live canvas, with the current layered rendering (raw
-    grey, optimized white, effects blue), plus a legend and layer toggles.
+  - **Status buttons.** Each is a clickable pill with a coloured dot and a
+    short label. A click opens a small panel with details and actions.
+    - **iPad:**
+      - *Waiting for iPad* (grey; nothing received since launch): the panel
+        shows the setup steps with this machine's IPs and port filled in.
+      - *Receiving* (green; a packet arrived in the last few seconds).
+      - *Connected, idle* (green outline; received before, quiet now; this is
+        normal between strokes).
+      - *Problem* (amber): port busy, or Windows network set to Public.
+
+      Actions: Restart listener, Show setup steps, Fix firewall (Windows;
+      Phase 7), Change OSC port.
+
+      **Note:** iDraw sends to us over UDP, and we can't "call" the iPad, so
+      there's nothing to dial on our side. "Reconnect" means re-opening our
+      listener and walking the user through the iPad side.
+    - **Plotter:**
+      - *Connected* (green);
+      - *Not found* (grey; with Connect);
+      - *Disconnected mid-plot* (red; with Reconnect and Discard queue);
+      - *No pyaxidraw* (grey; explains why);
+      - *Dry run* (blue).
+
+      Actions: Connect/Reconnect, Home, Disengage motors.
+  - **"Troubleshoot" in both panels (required).** It opens a step-by-step
+    walkthrough: one check per screen, with "That worked" / "Still not
+    working" buttons, never one wall of text.
+    - Wherever the app can test a step itself, it does, and shows the result
+      live. For example, the iPad status turns green the moment a packet
+      arrives, and the plotter check finishes the moment Connect succeeds.
+    - The walkthrough ends with "Copy diagnostics", which copies the version,
+      OS, IPs, port, statuses and the last 200 log lines, so the user can send
+      them in a bug report.
+    - **iPad walkthrough:**
+      1. Is iDraw OSC open, with the IP and port filled in exactly as shown?
+         The values are displayed, with a copy button.
+      2. Are both devices on the same Wi-Fi? Compare the network names.
+      3. Windows: is the network set to Public? The app checks this itself
+         and links the fix.
+      4. Firewall: the Fix firewall button (Windows) or the steps for Mac.
+      5. Is something else using the port? The app checks.
+      6. Does the network block devices from seeing each other, as many
+         campus, hotel and guest networks do? If so, offer the phone-hotspot
+         test and the Tailscale guide from the README.
+      7. Restart the listener and redraw a stroke.
+    - **Plotter walkthrough:**
+      1. Is the USB cable plugged in, and is the AxiDraw powered? Its power
+         supply is separate from USB, and the motors need it.
+      2. Try a different USB port or cable (some cables only carry power).
+      3. Is another program, such as Inkscape's AxiDraw extension or a second
+         Pantograph, holding the connection?
+      4. Is pyaxidraw installed? The app checks.
+      5. Connect again, and show the exact error if it fails.
+      6. Try "Pen test up/down" to confirm the servo moves.
+  - **Center:** the live canvas, drawn as **white paper with greyscale
+    strokes** (the same look as the SVG export and iDraw OSC). The optimized
+    and effect layers are overlays in two accent colours, with a legend and
+    a toggle for each layer.
   - **Sidebar tabs:**
-    - **Plot:** pen positions with test buttons, variable pressure, tilt,
-      flip, optimizer, Home, "effects only".
+    - **Plot:** paper size and AxiDraw model, pen positions with test
+      buttons, variable pressure, tilt, flip, optimizer, Home,
+      "effects only".
     - **Effects:** built from `postprocess.effect_specs()` as today.
     - **Tools:** flip H/V, minimum-width filter (live preview on the canvas),
       heal dots (with a report such as "healed 4 torn runs, 37 dots"), save as
@@ -434,7 +601,8 @@ are easy to spot.
   - **Visual system:**
     - CSS custom properties for colours, spacing and type;
     - a single system font stack;
-    - a dark theme built around the black canvas;
+    - a light, paper-like theme that matches the white canvas and exports
+      (replacing today's dark UI);
     - consistent controls (one slider style, one button hierarchy);
     - it must work at 1280×720 as well as on a large screen.
 - [ ] Rules that keep 1B easy (§9):
@@ -459,6 +627,17 @@ are easy to spot.
   - `plot_drawing` (the existing replay path).
 - [ ] Tools run on the *open* drawing. That's either the live session or one
       opened from the Library.
+- [ ] **`python svg_transform.py [file.svg]`** (decided; see Q5) keeps
+      working, but now opens the app's Tools tab with the file loaded, instead
+      of its tkinter window.
+  - If the app is already running, the file is handed over (Phase 2).
+    Otherwise the command starts the app with
+    `--open <file> --tab tools`.
+  - `--selftest` stays headless as before.
+  - Remove the tkinter GUI code. The transform functions stay, since the
+    app uses them.
+  - `python dot_healer.py` stays a command-line tool, unchanged. Healing is
+    also in the Tools tab.
 - [ ] Large drawings: run heavy transforms and heals on a worker thread, and
       show a busy state, so the WebSocket loop never blocks.
 - [ ] Thumbnails: generate them on demand into `thumbs/` under the drawings
@@ -489,6 +668,19 @@ All in `PantographApp/netinfo.py`.
     Settings → Network → Wi-Fi → Private, or allow Python on public networks
     in the firewall prompt." See G-4.
   - If the command fails, skip the check silently.
+- [ ] **"Fix firewall" button (Windows)**, in the iPad status panel. It
+      exists for the user who clicked Cancel on the first firewall prompt,
+      which otherwise means digging through Windows Defender Firewall
+      settings.
+  - It runs one elevated command, and Windows shows its standard "Allow this
+    app to make changes?" (UAC) prompt:
+    `Start-Process powershell -Verb RunAs -ArgumentList '... New-NetFirewallRule -DisplayName "Pantograph (iPad input)" -Direction Inbound -Protocol UDP -LocalPort <osc_port> -Program "<python.exe path>" -Action Allow -Profile Private,Public'`
+  - Show exactly what it will do before running it.
+  - Report success or failure afterwards.
+  - Remove any older "Pantograph" rule first, so rules don't pile up.
+  - On a Mac, show the equivalent steps instead: System Settings → Network →
+    Firewall → Options → allow Python. The macOS firewall is **off by
+    default**, so most Mac users never see this.
 - [ ] **OSC port busy:** if binding port 8800 fails, show "Port 8800 is in
       use by another program" with the option to change the OSC port. The
       card then reminds the user to update the port in iDraw as well.
@@ -540,6 +732,17 @@ Both launchers follow the same steps:
 - Ctrl+C prints "Terminate batch job (Y/N)?" after Python exits. That's
   harmless and documented.
 
+**Mac one-line installer (`PantographApp/install-mac.sh`)**, chosen as the
+recommended main Mac route, pending Marc's OK (see §12.2):
+- It's fetched with `curl -fsSL <release URL>/install-mac.sh | bash`.
+- It downloads the release zip with `curl` (so there's no quarantine flag),
+  extracts it to `~/Pantograph`, and checks that the launcher is executable.
+- It offers a Desktop shortcut to `Pantograph.command`, then launches it.
+- Re-running it updates in place: it replaces the app folder, while the data
+  in the user folders stays untouched.
+- It checks the macOS version first (G-33) and never uses `sudo`.
+- It has to stay short and readable, since people are piping it into `bash`.
+
 **Mac-specific (`Pantograph.command`):**
 - LF line endings, a `#!/bin/bash` first line, and the executable bit
   committed with `git update-index --chmod=+x`. Check that the GitHub zip
@@ -578,6 +781,9 @@ Both launchers follow the same steps:
 
 ### Phase 10: Docs and real-hardware test pass (1–2 days)
 
+- [ ] README Troubleshooting must explain **networks that isolate devices**
+      (school, work, hotel and guest Wi-Fi), with the hotspot test and
+      Tailscale as the fixes. See §12.4.
 - [ ] Rewrite the README setup section as: download → extract → double-click
       → enter the IP/port shown in the app into iDraw. Add screenshots for
       the Windows "Run anyway" prompt, the Mac "Open Anyway" steps
@@ -587,12 +793,14 @@ Both launchers follow the same steps:
 - [ ] Run the test matrix in §8 on real hardware.
 - [ ] Add a meeting or release note to `MEETINGS.html` if relevant.
 
-**Total: about 12–16 working days (2.5–3 weeks).** That's more than the
+**Total: about 13–17 working days (roughly 3 weeks).** That's more than the
 earlier estimate of 1.5–2 weeks. The difference is the work that reading the
 code turned up: recording moving to Python (§2.1), security (§2.2), the
-single instance, and the network help. Of those, recording and security are
-must-haves. The network help (Phase 7) and the update check could be dropped
-to save about a day.
+single instance, and the network help. On top of that come the decisions from
+2026-09-18: the paper/model settings, the status buttons, the Fix firewall
+button, single-threaded OSC, and the `svg_transform` hand-off, about one more
+day in total. Of those, recording and security are must-haves. The network
+help (Phase 7) and the update check could be dropped to save about a day.
 
 ---
 
@@ -605,13 +813,13 @@ Re-check this list before release.
 |---|---|---|---|
 | G-1 | Closing or reloading the tab loses the drawing (it's recorded in the browser) | Record in Python; autosave; `hello` restores the page | 3 |
 | G-2 | Any website can drive the plotter via the WebSocket | Origin + Host checks; bind to 127.0.0.1 | 2 |
-| G-3 | The firewall prompt says "Python", not "Pantograph"; users click Deny and OSC fails silently | Connection card explains after 20 s; README screenshots; the rule applies to uv's `python.exe` path, so pin Python's exact version so the path (and the rule) stays stable | 7, 10 |
+| G-3 | The firewall prompt says "Python", not "Pantograph"; users click Cancel and OSC fails silently | Connection card explains after 20 s; **"Fix firewall" button** (one UAC click adds the rule); README screenshots; the rule applies to uv's `python.exe` path, so pin Python's exact version so the path (and the rule) stays stable | 7, 10 |
 | G-4 | Windows treats new Wi-Fi networks as **Public**, and the firewall blocks inbound traffic there even after "Allow" (Private is ticked by default) | Detect the Public profile and show the fix; explain in the README | 7 |
 | G-5 | OSC port 8800 is busy (another program, or a second copy of the app) | Single-instance check first; then a clear error plus a setting to change the port (and a reminder to change iDraw too) | 2, 7 |
 | G-6 | Port 5000 is taken by AirPlay Receiver on Macs | The default port is 5810, with fallback to 5811–5830 | 2 |
 | G-7 | A Windows user double-clicks the `.bat` inside the zip viewer, so it runs from a temp folder | Launcher detects `\AppData\Local\Temp\` or a `.zip` in its path and says "Extract the zip first (right-click → Extract All)", then pauses | 8 |
 | G-8 | `.bat` with LF endings misbehaves; `.command` with CRLF fails | `.gitattributes` eol rules; CI runs the real launchers | 0, 9 |
-| G-9 | `.command` loses its executable bit, or macOS Gatekeeper blocks it ("Open Anyway" in System Settings since Sequoia; right-click → Open no longer bypasses it) | Commit with `+x`; verify the release zip keeps the mode; README screenshots; fallback instruction: `chmod +x` in Terminal | 8, 10 |
+| G-9 | `.command` loses its executable bit, or macOS Gatekeeper blocks it ("Open Anyway" in System Settings since Sequoia; right-click → Open no longer bypasses it) | **Recommended main Mac route (pending OK): the one-line `curl` installer**, which leaves no quarantine flag, so no prompt appears. The zip route keeps: commit with `+x`, a check that the release zip keeps the mode, README screenshots, and a `chmod +x` fallback | 8, 10 |
 | G-10 | Windows shows "Publisher could not be verified" for the downloaded `.bat` | Documented as expected; screenshot | 10 |
 | G-11 | pyaxidraw supports Python ≤ 3.12 only | `.python-version` = 3.12; `requires-python = ">=3.12,<3.13"` | 0 |
 | G-12 | pyaxidraw's URL is unversioned, so the lock hash breaks when Evil Mad Scientist updates it | Host a fixed copy as a GitHub Release asset and point `pyproject.toml` at that URL. Upgrade deliberately: download the new one, test, re-lock. Include its licence (see Q6). | 0, 9 |
@@ -627,10 +835,17 @@ Re-check this list before release.
 | G-22 | Large drawings (about 6 MB SVGs) make the Library and tools slow | Server-made thumbnails; worker thread for transforms; busy states | 6 |
 | G-23 | Old SVGs, including ones made by the old browser code or `iDraw_to_svg`, must still load and replay | Format stays v1; tests load every existing drawing; Recorder copies the JS rules exactly | 0, 3 |
 | G-24 | Mac Local Network privacy prompts (macOS 15+) might affect receiving iPad traffic when launched from Terminal | **Unverified.** Test on a real Mac first; document whatever prompt appears | 10 |
-| G-25 | Windows on ARM / Intel Macs | Launcher picks the matching uv build. Intel Macs: uv + numpy support x86_64; test if one is available. Windows on ARM: see Q8 | 8 |
+| G-25 | Windows on ARM / Intel Macs | **Windows on ARM: not handled (decided 2026-09-18);** revisit only if reported. The launcher still picks the uv build matching the chip, since that costs nothing. Intel Macs: all dependencies ship x86_64 builds; see G-33 for old macOS | 8 |
 | G-26 | Our dependency links disappear (uv release, pyaxidraw mirror, PyPI) | Everything pinned; uv binary + pyaxidraw both hosted on GitHub releases (uv's own, and ours); PyPI is the one accepted external dependency | 8, 9 |
 | G-27 | Updates are manual | Version shown; optional update-available notice | 9 |
-| G-28 | OSC packets are handled on separate threads and may race (§2.12) | Out of scope; flagged; see Q7 | n/a |
+| G-28 | OSC packets are handled on separate threads and may race (§2.12) | Switch to single-threaded `BlockingOSCUDPServer`, with a bigger receive buffer; as its own commit, tested before and after | 1 |
+| G-29 | The iPad can't be "reconnected" from our side (UDP is one-way; iDraw sends to us) | The iPad status button offers Restart listener, setup steps, Fix firewall and Change port, and shows *never heard* vs *idle* vs *receiving* | 1, 5 |
+| G-30 | Changing paper size or model mid-plot would scramble coordinates | Refuse while the plot queue isn't empty; recompute mapping, effect context and tilt centre on change | 3 |
+| G-31 | Networks that block devices from seeing each other (common on campus, hotel and guest Wi-Fi) mean the iPad can never reach the computer; no firewall setting fixes it | Troubleshoot walkthrough detects the case ("same network, firewall OK, still nothing"), suggests a phone hotspot to confirm, and links the README's Tailscale guide | 5 |
+| G-32 | pyaxidraw's `setup.py` builds its dependency list at install time (`ink_extensions`, `lxml`, `plotink`, `pyserial`, `requests`), and lxml is compiled code | Lock and test on every platform in CI; lxml is one of the libraries to watch on Windows ARM (§11 Q8) | 0, 9 |
+| G-33 | Very old macOS can't run current Python/numpy builds | Launcher checks the macOS version first and prints a plain "too old" message | 8 |
+| G-34 | Printing non-ASCII characters (`≈`, `→`, `×`, `—` appear in log lines) raises `UnicodeEncodeError` when output isn't a real console (piped, redirected, or some launchers on Windows use cp1252). That crash lands inside an OSC handler, mid-stroke | Phase 1 logging: UTF-8 log file, and `sys.stdout.reconfigure(encoding="utf-8", errors="replace")` at startup | 1 |
+| G-35 | Input with **no pressure data** (a finger, or a Pencil iDraw isn't reading) sends pressure exactly `1.0` on every point. The spurious-pressure rule used to drop the whole stroke: the plotter travelled to its start and never lowered the pen | **Done (Phase −1, 2026-09-19).** A run of 5+ placeholder `1.0`s is plotted at 0.5 (`NO_PRESSURE_RUN`, `NO_PRESSURE_VALUE`). A whole stroke of fewer than 5 (a finger tap) gets 0.5 when it ends. Shorter runs inside real pressure are still interpolated. Why the old drop existed: MEETINGS.html meeting 3. It was a side effect of glitch interpolation, not a response to phantom strokes | −1 |
 
 ---
 
@@ -655,7 +870,10 @@ every message has a `type` field.
   `pen_test_*`, `replay`, `set_effect_*`, `set_effects_only`, `set_flip_*`.
 - **New:**
   - `new_drawing`, `save_svg {layers}`, `save_png {b64}`;
-  - `connect_plotter`, `discard_queue`, `quit`;
+  - `connect_plotter`, `discard_queue`, `disengage_motors`, `quit`;
+  - `restart_osc`, `fix_firewall`, `set_osc_port`, `set_paper {preset | w,h}`,
+    `set_model`;
+  - `open_file {path, tab}` (from a second launch or `svg_transform.py`);
   - the `library_*` and `tool_*` messages (Phase 6);
   - `restore {accept}`.
 
@@ -674,7 +892,13 @@ These are deliberate, and they'll be listed in the release notes:
 - Drawings survive a page reload, and a restore is offered after a crash.
 - "Clear" becomes "New drawing", and unsaved work is saved automatically.
 - Downloads go to `Documents/Pantograph/` instead of `saved_drawings/` in the
-  repo (see Q1).
+  repo. That folder stays in git as documentation.
+- The canvas, the UI and exported SVGs switch from dark to **white paper with
+  greyscale strokes**.
+- Paper size and AxiDraw model are now settings rather than constants in the
+  code.
+- `python svg_transform.py` opens the app's Tools tab instead of a separate
+  window.
 - Settings follow the user instead of the browser. They no longer reset if
   you switch browsers or the port changes.
 - `python listen_to_idraw.py` opens the new UI at `127.0.0.1:5810` instead of
@@ -694,6 +918,10 @@ These are deliberate, and they'll be listed in the release notes:
 | Documents folder redirected to OneDrive | ☐ | ☐ | n/a |
 | Firewall prompt: Allow; then separately Deny → the app explains | ☐ | ☐ | ☐ |
 | Network set to Public → warning shown | ☐ | ☐ | n/a |
+| Denied firewall → "Fix firewall" → one UAC click → iPad input arrives | ☐ | ☐ | n/a |
+| Status buttons: iPad waiting / receiving / idle; plotter connect, unplug, reconnect | ☐ | ☐ | ☐ |
+| Paper size / model change → mapping correct; refused mid-plot | ☐ | ☐ | ☐ |
+| Fast scribble after the single-thread OSC switch: no stale-x points, no dropped packets | ☐ | ☐ | ☐ |
 | iPad draws → preview → autosave → reload tab → nothing lost | ☐ | ☐ | ☐ |
 | With AxiDraw: live plot, pen tests, Home, replay, effects | ☐ | ☐ | ☐ |
 | Unplug the AxiDraw mid-plot → error → reconnect | ☐ | ☐ | ☐ |
@@ -752,42 +980,195 @@ The known 1B risks and mitigations are tracked in the project memory
     action is just another consumer of it.
   - Drawings are about 6 MB each, mostly per-segment `<path>` elements plus
     JSON. A lighter "web" export might be wanted then.
-- **Paper size and AxiDraw model settings.** Currently hard-coded to 8.5×11",
-  which is wrong for anyone on A4 (see Q4).
 - **Option 2** (PyInstaller-packaged `.exe`/`.app`, built in CI) remains a
   later add-on. The single entry point and data-directory design above carry
   over unchanged.
 
 ---
 
-## 11. Open questions for Marc
+## 11. Questions for Marc
 
-Answers get recorded here, and in §1 once decided.
+Answers are recorded here and carried into §1.
 
-- **Q1: where do drawings go?** The proposal is `Documents/Pantograph/` for
-  everyone, including development runs from the repo, with a setting to
-  change it. And what happens to the repo's existing `saved_drawings/`? The
-  proposal is to move the files into `Documents/Pantograph/`, keep one or two
-  small ones as test fixtures, and stop committing drawings to git.
-- **Q2: recording in Python (§2.1 / Phase 3).** This is a real behaviour
-  change, and I recommend it strongly. OK?
-- **Q3: exported SVG look.** One style for every export. Grey raw strokes as
-  the preview shows them, or white-on-black as `svg_transform` writes? This
-  only affects how files look in a viewer; plotting is unaffected.
-- **Q4: paper size / AxiDraw model setting.** Add it now (about half a day:
-  presets for Letter, A4, A3 and custom, clamped to the machine's travel), or
-  later?
-- **Q5: `python svg_transform.py`.** Keep its tkinter window for the old
-  command (zero effort; the functions are shared), or have the command open
-  the app's Tools tab instead?
-- **Q6: licence.** The repo has no LICENSE file. The AxiDraw software's GitHub
-  repo is GPL-2.0. Hosting a copy of pyaxidraw (G-12) is fine under the GPL
-  if we include its licence and source (it *is* source). Choosing a licence
-  for this project (for example GPL-3.0 or MIT) should happen before the
-  first public release.
-- **Q7: OSC ordering (§2.12).** Investigate the threading race as a separate
-  task, before or after the app?
-- **Q8: which machines to support.** Windows on ARM (Snapdragon laptops)
-  and Intel Macs: support officially, best effort, or ignore?
-- **Q9: naming.** "Pantograph" for the launcher, the data folders and the
-  window title?
+| # | Question | Answer (2026-09-18) |
+|---|---|---|
+| Q1 | Where do drawings go? | `Documents/Pantograph/` by default. **Keep `saved_drawings/` in git** for documentation; the app doesn't write there. |
+| Q2 | Recording moves into Python? | Yes. |
+| Q3 | Exported SVG look? | White background, greyscale strokes, matching iDraw OSC. Applied across the app (canvas, UI theme, every export). |
+| Q4 | Paper size / AxiDraw model? | A saved setting like x/y tilt, now (Phase 3). |
+| Q5 | `python svg_transform.py`? | Whatever looks most consistent, so it opens the app's Tools tab (Phase 6). |
+| Q6 | Licence? | **MIT.** Done: `LICENSE` + README line. (Reasoning below.) |
+| Q7 | OSC threading? | Switch to a single thread in Phase 1 (§2.12). |
+| Q8 | Windows on ARM / Intel Macs? | Don't handle Windows on ARM (rare, low risk). Intel Macs just work on a recent macOS. See the notes below. |
+| Q9 | Name? | **Pantograph.** |
+
+**Q6, licence notes.** This isn't legal advice, but it's the common
+understanding.
+- **Without a LICENSE file**, the code is "all rights reserved". People can
+  look at it on GitHub but have no legal right to copy, modify or share it.
+  Adding one is just a `LICENSE` text file at the repo root (GitHub's "Add
+  file → Create new file → LICENSE" offers templates), plus a line in the
+  README.
+- **MIT (permissive):** anyone can use, change and redistribute the code,
+  even in closed or commercial projects, as long as they keep the copyright
+  notice. It's short, the most common choice, and it's compatible with
+  pyaxidraw's GPL.
+- **GPL-3.0 (copyleft):** the same freedoms, but anyone who *distributes* a
+  modified version must release their source under the GPL too. That's
+  compatible here because pyaxidraw is "GPL-2.0 **or later**".
+- **The artwork is separate.** The code licence doesn't have to cover
+  drawings or photos. They can stay "all rights reserved", or use a Creative
+  Commons licence such as CC BY-NC. Say which in the README.
+- **The pyaxidraw copy we host (G-12)** keeps its own GPL licence file inside
+  the zip. That's all the GPL asks for when redistributing it unmodified,
+  since it's already source code.
+
+**Q8, what actually fails.** Most of our libraries are plain Python and run on
+any chip. Three contain compiled code, which needs a ready-made build for each
+chip type: **numpy** (ours), **lxml** (pulled in by pyaxidraw) and
+**websockets** (whose compiled part is an optional speed-up). The failure case:
+someone on a **Windows laptop with an ARM chip** double-clicks the launcher,
+and one of those libraries has no ARM build for Python 3.12, so the first-time
+install stops with an error.
+- **Likelihood:** low and shrinking. Recent numpy and lxml releases appear to
+  ship Windows-ARM builds (unverified; to be confirmed in CI). If one doesn't,
+  the launcher falls back to the regular Intel/AMD Python, which Windows on
+  ARM runs through its built-in translation. That's plenty fast for this app,
+  and the USB serial link to the AxiDraw works the same way.
+- **How common the machines are:** Windows-on-ARM laptops (Snapdragon "Copilot+
+  PCs", Surface Pro 11 and similar) have only been mainstream since mid-2024,
+  and are a small fraction of Windows PCs in use (low single-digit percent;
+  estimate, not measured).
+- **Intel Macs:** all of our libraries ship Intel-Mac builds, so nothing is
+  expected to fail. The one real limit is **very old macOS**: current Python
+  and numpy builds need a reasonably recent macOS (roughly 10.13+ for Python,
+  newer for some numpy builds). A 2012-era Mac stuck on an old macOS may fail
+  to install. The launcher should print "Your macOS is too old" rather than a
+  raw error.
+- **Why "best effort" is cheap:** the launcher already has to detect the chip
+  to download the right uv. The fallback is a few lines, and CI can run a
+  Windows-ARM job if GitHub's hosted ARM runner is available to this repo.
+
+---
+
+## 12. Remaining risks (after every mitigation above)
+
+These are the problems that can't be engineered away, or only partly. Keep
+them in view.
+
+1. **No Mac on hand for testing.** CI proves the Mac install works. It can't
+   test the iPad → Mac → AxiDraw flow, macOS permission prompts (G-24) or the
+   "Open Anyway" experience. **One real-Mac session before release is
+   required.**
+2. **The Mac first-launch step is more than one click.** This is accepted by
+   decision; it's the same G-9 as before, restated so its size is clear. Since
+   macOS 15 (Sequoia), the first double-click on an unsigned downloaded file
+   shows a dialog with only "Done" and "Move to Trash". There's no Open
+   button, and right-click → Open no longer bypasses it. The user has to:
+   1. go to System Settings → Privacy & Security;
+   2. scroll down to "Pantograph.command was blocked", and click **Open
+      Anyway**;
+   3. enter their Mac password;
+   4. double-click again and click **Open**.
+
+   It's a one-time step, easy with screenshots, but some users will give up.
+
+   **Recommended way around it (no $99), pending Marc's OK: a one-line Terminal installer for Mac.**
+   macOS only blocks files carrying the "downloaded from the internet"
+   (quarantine) flag. Browsers set that flag; `curl` doesn't. So the README's
+   Mac instructions become "paste this into Terminal":
+   `curl -fsSL https://github.com/MarcDunand/Project-Pantograph/releases/latest/download/install-mac.sh | bash`.
+   The script:
+   - downloads and extracts the release zip into `~/Pantograph`;
+   - makes a double-clickable `Pantograph.command` there and optionally puts
+     it on the Desktop;
+   - runs it once.
+
+   Nothing it creates is quarantined, so there are **no security prompts,
+   then or ever**. The zip plus "Open Anyway" screenshots stays as a second
+   route for people who won't use Terminal. Cost: about half a day
+   (`install-mac.sh` in Phase 8, released as an asset in Phase 9). Many open
+   source tools, including Homebrew, install this way.
+
+   Other ways out, if ever needed:
+   - **An Apple fee waiver:** Apple waives the $99 for accredited educational
+     institutions and nonprofits. That's an *organization* enrolment, so it
+     would go through a school's or lab's team rather than an individual.
+   - **The $99 account itself,** which would also need Option 2 packaging.
+3. **Locked-down computers** (school labs, work laptops) may block the
+   download or the script entirely. There's no fix on our side; the README
+   says so.
+4. **Networks that isolate devices** (G-31). Common on exactly the campus
+   networks students use. There's no fix on our side, so it **must** be
+   covered in two places:
+   - the iPad troubleshoot walkthrough (Phase 5, step 6), which detects the
+     pattern: same network, firewall OK, still nothing received;
+   - the README's Troubleshooting section (Phase 10), in plain words: "Some
+     school, work, hotel and guest Wi-Fi networks block devices from talking
+     to each other. Use a phone hotspot or Tailscale."
+5. **iDraw OSC is a third-party app.** If it changes its messages, gets
+   abandoned or leaves the App Store, input breaks. Out of our control. Worth
+   noting in AGENTS.md; a future fallback would be our own iPad web page
+   sending points.
+6. **Stroke splitting by timing isn't fixed at the source.** Pen-up is still
+   inferred from a 0.15 s gap, so fast strokes can still tear into dots. The
+   healer repairs them after the fact. Single-threaded OSC may help a little
+   (unproven).
+
+   iDraw sends flat, individual values with no stroke IDs and no start/end
+   messages (AGENTS.md §3.4), so there's no nesting to read.
+
+   **Lead from Marc's `--raw-osc` capture (2026-09-18):** a "state block"
+   (`/r /g /b /a`, the nine tool flags, `/canvasWidth`, `/canvasHeight`,
+   `/drawingWidth`, `/eraserWidth`) comes before the first stroke, and
+   again between strokes. It looks like a stroke-start marker, but the
+   capture has two things that don't fit a simple "one block = one new
+   stroke" rule:
+   - **Five blocks in a row with no points between them.** These could be
+     taps or touches that produced no points, a block sent on *both*
+     touch-down and lift, or a periodic heartbeat while idle.
+   - **A block between two points that are spatially continuous**
+     (`198.3,423` → block → `195,421` → `195,421` duplicate → continues left).
+     This is either a quick lift and re-touch, or the block also arrives
+     mid-stroke.
+
+   The capture has no timestamps, so it can't settle this. It's also worth
+   noting that **every point in it has pressure exactly `1.0`**, the value the
+   pipeline treats as spurious. A stroke made entirely of those is dropped
+   from the plot. If this was drawn with a finger, that's expected (finger
+   input reports a constant). If it was the Pencil, something is off.
+
+   Two avenues are still open, and neither is part of the app build:
+   - **A capture experiment (about 1 hour, needs the iPad):** log every raw
+     packet with a precise arrival time, drawing slow strokes, fast strokes,
+     taps and lifts. It would answer four questions:
+     1. Does the "state block" (canvas size, tool, colour) arrive at the
+        start of every stroke? If so, it's a free stroke-start marker.
+     2. Does the last point before a lift carry a telltale pressure?
+     3. Do messages ever arrive as OSC bundles with iDraw's own timestamps?
+        Those would remove Wi-Fi timing jitter from the gap measurement.
+     4. Does any unknown address show up?
+   - **Deciding pen-up later:** the plotter usually runs seconds behind the
+     drawing, so pen-up doesn't need to be decided instantly. Treat a 0.15 s
+     gap as a *tentative* lift. If the next point arrives soon and close to
+     the last one, cancel the lift while it's still waiting in the plot
+     queue. That's the healer's logic, applied live.
+   - **The two combine well.** If the capture confirms the state block marks
+     a new touch, it becomes the tie-breaker: points after a gap *with no
+     state block before them* continue the same stroke (cancel the tentative
+     lift), and points after a state block start a new one. The timeout then
+     only decides *when* the pen lifts, never *whether* a stroke was split.
+   - **Capture protocol** (script logs each message with a millisecond
+     arrival time; Pencil, not finger):
+     1. one slow stroke, then wait 3 s;
+     2. one very fast long stroke, then wait 3 s;
+     3. a single tap, then wait 3 s;
+     4. touch and hold still for 2 s, then lift;
+     5. nothing at all for 10 s, to test for an idle heartbeat;
+     6. a quick deliberate lift and re-touch at the same spot.
+7. **First launch needs internet** (about 150 MB). Accepted, and stated up
+   front.
+8. **Support load lands on Marc.** Mitigated by the troubleshoot walkthroughs
+   and "Copy diagnostics", but real users will still hit new cases.
+9. **The UI redesign is the least predictable phase.** Design taste takes
+   iteration, and the 3–4 day estimate assumes one review round.

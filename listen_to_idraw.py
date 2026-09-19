@@ -25,6 +25,7 @@ Dependencies:
 import argparse
 import collections
 import math
+import socket
 import threading
 import time
 
@@ -32,7 +33,7 @@ import numpy as np
 from rdp import rdp as _rdp_fn
 
 from pythonosc.dispatcher import Dispatcher
-from pythonosc.osc_server import ThreadingOSCUDPServer
+from pythonosc.osc_server import BlockingOSCUDPServer
 
 import postprocess
 import preview
@@ -53,10 +54,17 @@ OSC_PRESSURE_MAX = 4.166666507720947
 PAPER_WIDTH_IN  = 8.5
 PAPER_HEIGHT_IN = 11
 
-# How long a gap between received points (in seconds) counts as a pen lift.
-# 0.15s (150ms) is a reasonable default — short enough to feel responsive,
-# long enough to not trigger falsely during normal drawing pauses.
-PEN_UP_TIMEOUT_SEC = 0.15
+# Strokes are no longer split by timing. iDraw OSC sends a "state block"
+# (/r /g /b /a, the tool flags, /canvasWidth, /canvasHeight, /drawingWidth,
+# /eraserWidth) before every new stroke and never in the middle of one, so that
+# block is what ends one stroke and starts the next — see STROKE BOUNDARIES.
+#
+# The pen still has to come off the paper when the Pencil pauses, or it sits
+# there bleeding ink. After this long with no new point the plotter *rests* the
+# pen: lifts it without ending the stroke. If the stroke carries on, the lift is
+# taken back out of the queue when the plotter has not reached it yet, or the
+# pen goes back down where it left off — either way the line stays unbroken.
+PEN_REST_SEC = 0.15
 
 # Minimum distance between consecutive points sent to the plotter, in paper inches.
 # Points that are closer together than this are skipped to avoid flooding the
@@ -66,9 +74,17 @@ PEN_UP_TIMEOUT_SEC = 0.15
 STREAM_MIN_DIST_IN = 0.01
 
 # Raw pressure value that iDraw OSC sends as a placeholder/default (normalises to ≈ 0.24).
-# Isolated occurrences are replaced by linear interpolation between neighbours;
-# a stroke where every point has this value is discarded entirely.
+# Isolated occurrences are glitches and are replaced by linear interpolation
+# between neighbours.
 SPURIOUS_RAW_PRESSURE: float = 1.0
+
+# A run of this many placeholder values in a row is not a glitch: iDraw has no
+# pressure reading at all (a finger, or a Pencil it isn't reading). The run is
+# then plotted at NO_PRESSURE_VALUE (normalised 0–1) instead. A whole stroke of
+# placeholders too short to reach the run length gets the same value when it
+# ends, since it has no real neighbours to interpolate from.
+NO_PRESSURE_RUN:   int   = 5
+NO_PRESSURE_VALUE: float = 0.5
 
 # ──────────────────────────────────────────────────────────────────────────────
 # POST-PROCESSING EFFECTS — flip one on to transform what gets plotted
@@ -210,9 +226,9 @@ def physical_to_canvas(px: float, py: float, mapping: dict) -> tuple[float, floa
 _plot_deque: collections.deque = collections.deque()
 _plot_lock  = threading.Lock()
 
-# Serializes pen-state mutations (_pen_is_down, _last_plot_pt, _pending_024)
-# between the point-emitting thread and the pen-up watchdog thread. Reentrant
-# because _emit_point holds it while calling _maybe_pen_up.
+# Serializes pen-state mutations (_pen_is_down, _last_plot_pt, _pending_024,
+# the rest state) between the OSC thread, the pen-rest watchdog thread and the
+# replay thread. Reentrant because the stroke functions call each other under it.
 _pen_lock   = threading.RLock()
 
 # Marks the replay thread so the points it emits can be tagged on the way to the
@@ -233,6 +249,11 @@ _stroke_had_moves: bool        = False
 _pending_024:               list  = []     # stroke commands buffered while pressure is spurious
 _stroke_has_good_pressure:  bool  = False  # True once a non-spurious point is seen this stroke
 _stroke_last_good_pressure: float = 0.0   # last non-spurious normalised pressure
+_spurious_run:              int   = 0     # placeholder values in a row, this stroke
+
+_pen_rested:   bool = False   # stroke still open, but the pen was lifted during a pause
+_rest_cmds:    list = []      # the commands that rested it, kept so they can be taken back
+_rest_dwelled: bool = False   # the rest already paused for a tap-dot, so the stroke end needn't
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -753,8 +774,9 @@ DRAWABLE_TOOLS = {"pen", "pencil", "marker", "monoline", "crayon", "fountainPen"
 # with different post-processors switched on.
 
 # Idle gaps longer than this are shortened on replay, so a drawing with long
-# pauses does not take its original wall-clock time to plot. Must stay above
-# PEN_UP_TIMEOUT_SEC or between-stroke pen lifts would stop being inferred.
+# pauses does not take its original wall-clock time to plot. Stroke boundaries
+# come from the recording itself, so this only affects pacing (a gap above
+# PEN_REST_SEC rests the pen mid-stroke, exactly as it would live).
 REPLAY_MAX_GAP_SEC = 0.30
 
 
@@ -776,6 +798,9 @@ def _replay_recording(rec: dict) -> None:
     with _plot_lock:
         _effect_chain = postprocess.build_chain(_EFFECT_SWITCHES, _effect_params)
         _effect_ctx   = postprocess.Ctx(x_max=PAPER_HEIGHT_IN, y_max=PAPER_WIDTH_IN)
+
+    # A live stroke left open would otherwise swallow the replay's first stroke.
+    _end_stroke()
 
     for s in strokes:
         pts = s.get("points") or []
@@ -810,86 +835,159 @@ def _replay_recording(rec: dict) -> None:
             state["pressure"] = p_raw
             _emit_point()
 
-        # End the stroke deliberately rather than waiting on the watchdog: replay
-        # pacing is not the original pacing, so the quiet period that would have
-        # triggered the lift may never occur.
-        state["_last_point_time"] = time.time() - PEN_UP_TIMEOUT_SEC - 1.0
-        _maybe_pen_up()
+        # The recording already knows where each stroke ends — this stands in
+        # for the state block iDraw would have sent before the next one.
+        _end_stroke()
 
     print("[replay] done")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# STROKE BOUNDARIES
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# A stroke ends only when the next one's state block arrives (or, on replay,
+# where the recording says it ends). Timing never splits a stroke; it only rests
+# the pen during a pause, and that rest is undone if the stroke carries on.
+#
+# Consequence: iDraw sends nothing when the Pencil lifts, so the *latest* stroke
+# stays open until the next one begins. Its pen is off the paper (rested), but
+# the effects that act at a stroke's end — zigzag's last corner, pressure hatch,
+# stroke connector — and the preview's pen_up run when the next stroke starts.
+
+def _end_stroke():
+    """Close the open stroke, if there is one."""
+    global _last_plot_pt, _stroke_had_moves, _pen_rested, _rest_cmds, _rest_dwelled
+    # Held under _pen_lock so this never nulls _last_plot_pt in the middle of an
+    # _emit_point read-modify-write on another thread (the crash during replay).
+    with _pen_lock:
+        if not state["_pen_is_down"]:
+            return
+        state["_pen_is_down"] = False
+        rested_dwell = _rest_dwelled
+        _pen_rested   = False
+        _rest_cmds    = []
+        _rest_dwelled = False
+
+        if _pending_024:
+            if not _stroke_has_good_pressure:
+                # Every point was a placeholder, too few to reach NO_PRESSURE_RUN
+                # (a short finger stroke or tap). Nothing real to interpolate
+                # from, so plot it at the no-pressure value — pendown is in the
+                # buffer, so this is where the pen first goes down.
+                _flush_pending_024(NO_PRESSURE_VALUE, from_pressure=NO_PRESSURE_VALUE)
+                if not _show_raw_osc:
+                    print(f"[pressure] no pressure data in this stroke — plotted at {NO_PRESSURE_VALUE}")
+            else:
+                # Trailing spurious points — interpolate pressure down to 0. (A
+                # rested pen never gets here: resting flushes these, and points
+                # after it arrive with the pen back down.)
+                _flush_pending_024(0.0)
+
+        preview.broadcast({"type": "pen_up"})
+        t = time.monotonic()
+        if not _stroke_had_moves and not rested_dwell:
+            _enqueue(postprocess.dot_dwell(t))
+        # Goes through the effects even when the pen is already resting — this is
+        # the one penup per stroke they see, and what their stroke-end work hangs on.
+        _enqueue(postprocess.penup(t))
+        _last_plot_pt = None
+        _stroke_had_moves = False
+        if not _show_raw_osc:
+            print("[stroke end]")
+
+
+def _state_block_seen():
+    """
+    Called by every state-block handler before it stores its value. iDraw sends
+    the block before every new stroke, so whatever stroke is open has ended (and
+    must end before the block's new colour/width/tool land in `state`). The first
+    message of a block does the work; the rest find no stroke open.
+    """
+    if state["_pen_is_down"]:
+        _end_stroke()
+
+
+def _maybe_rest_pen():
+    """Lift the pen off the paper if the point stream has paused, keeping the stroke open."""
+    global _pen_rested, _rest_cmds, _rest_dwelled
+    with _pen_lock:
+        last = state["_last_point_time"]
+        if (last is None or not state["_pen_is_down"] or _pen_rested
+                or time.time() - last <= PEN_REST_SEC):
+            return
+        _pen_rested = True
+        if not _stroke_has_good_pressure:
+            return      # every point so far is buffered as spurious — pen never went down
+        if _pending_024:
+            _flush_pending_024(0.0)   # taper exactly as a real lift would
+        if _effects_only:
+            return      # the base stroke isn't being plotted, so there's no pen to rest
+        # Raw, not through the effects: to them the stroke is still going.
+        t = time.monotonic()
+        cmds = []
+        if not _stroke_had_moves:
+            cmds.append(postprocess.dot_dwell(t))
+            _rest_dwelled = True
+        cmds.append(postprocess.penup(t))
+        with _plot_lock:
+            _plot_deque.extend(cmds)
+        _rest_cmds = cmds
+        if not _show_raw_osc:
+            print("[pen rest — pause]")
+
+
+def _resume_after_rest(t: float, pressure: float) -> None:
+    """
+    The stroke carried on after a rest. Take the lift back out of the queue if the
+    plotter hasn't reached it yet — the usual case, since it runs behind — else
+    lower the pen again where it left off. Called with _pen_lock held.
+    """
+    global _pen_rested, _rest_cmds, _rest_dwelled
+    _pen_rested = False
+    cmds, _rest_cmds = _rest_cmds, []
+    if not cmds:
+        return      # nothing was lifted (pen never down, or effects-only)
+    with _plot_lock:
+        n = len(cmds)
+        if len(_plot_deque) >= n and all(_plot_deque[i - n] is c for i, c in enumerate(cmds)):
+            for _ in range(n):
+                _plot_deque.pop()
+            _rest_dwelled = False
+            if not _show_raw_osc:
+                print("[pen rest taken back — still queued]")
+            return
+    if _effects_only:
+        return
+    lx, ly = _last_plot_pt
+    _enqueue_raw(postprocess.pendown(t, pressure, lx, ly))
+    if not _show_raw_osc:
+        print("[pen down again — stroke continues]")
+
+
+def _pen_rest_thread():
+    """Polls for a quiet point stream and rests the pen once PEN_REST_SEC passes."""
+    while True:
+        time.sleep(PEN_REST_SEC / 2)
+        _maybe_rest_pen()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # OSC HANDLERS
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _maybe_pen_up():
-    """Fire a pen-up event if the point stream has gone quiet."""
-    global _last_plot_pt, _stroke_had_moves
-    # Held under _pen_lock so this never nulls _last_plot_pt in the middle of an
-    # _emit_point read-modify-write on another thread (the crash during replay).
-    with _pen_lock:
-        last = state["_last_point_time"]
-        if last is None:
-            return
-        if state["_pen_is_down"] and (time.time() - last) > PEN_UP_TIMEOUT_SEC:
-            state["_pen_is_down"] = False
 
-            if _pending_024:
-                if not _stroke_has_good_pressure:
-                    # Every point in the stroke had spurious pressure — discard it entirely.
-                    # moveto was already queued (plotter travels pen-up to that spot), but
-                    # pendown was never sent, so no ink is deposited.
-                    n = len(_pending_024)
-                    print(
-                        f"[pressure] ERROR: stroke discarded — all {n} point(s) had"
-                        f" spurious pressure (raw=1.0, norm≈0.24)"
-                    )
-                    _pending_024.clear()
-                    _last_plot_pt     = None
-                    _stroke_had_moves = False
-                    # The stroke is dropped from the plot, but it still happened on
-                    # the tablet — the preview has been drawing it and must be told
-                    # it ended, or the next stroke continues it: a phantom line on
-                    # screen, and two strokes merged into one in the recording.
-                    preview.broadcast({"type": "pen_up"})
-                    return
-                # Trailing spurious points — interpolate pressure down to 0
-                _flush_pending_024(0.0)
-
-            preview.broadcast({"type": "pen_up"})
-            t = time.monotonic()
-            if not _stroke_had_moves:
-                _enqueue(postprocess.dot_dwell(t))
-            _enqueue(postprocess.penup(t))
-            _last_plot_pt = None
-            _stroke_had_moves = False
-            if not _show_raw_osc:
-                print("[pen up — timeout]")
-
-
-def _pen_watchdog_thread():
-    """
-    Polls for a quiet point stream and fires pen-up when the timeout elapses.
-    This ensures the final stroke of a session is always finalized, even when
-    the user stops drawing and never starts a new stroke to trigger _maybe_pen_up.
-    """
-    while True:
-        time.sleep(PEN_UP_TIMEOUT_SEC / 2)
-        _maybe_pen_up()
-
-
-def _flush_pending_024(next_pressure: float) -> None:
+def _flush_pending_024(next_pressure: float, from_pressure: float | None = None) -> None:
     """
     Emit buffered spurious-pressure items with linearly interpolated pressures
-    (from _stroke_last_good_pressure → next_pressure), then clear the buffer.
-    Sets _stroke_had_moves for any lineto commands emitted.
+    (from _stroke_last_good_pressure, or from_pressure if given, → next_pressure),
+    then clear the buffer. Sets _stroke_had_moves for any lineto commands emitted.
     """
     global _stroke_had_moves
     n = len(_pending_024)
     if n == 0:
         return
-    p_prev = _stroke_last_good_pressure
+    p_prev = _stroke_last_good_pressure if from_pressure is None else from_pressure
     p_next = next_pressure
     for i, item in enumerate(_pending_024):
         p_interp = p_prev + (p_next - p_prev) * (i + 1) / (n + 1)
@@ -912,7 +1010,8 @@ def _emit_point():
          point; threshold grows with lag when optimisation is enabled.
       2. RDP on the deque backlog — handled in _optimizer_thread.
     """
-    global _last_plot_pt, _stroke_had_moves, _stroke_has_good_pressure, _stroke_last_good_pressure
+    global _last_plot_pt, _stroke_had_moves, _stroke_has_good_pressure, _stroke_last_good_pressure, \
+           _pen_rested, _rest_cmds, _rest_dwelled, _spurious_run
 
     x = state["x"]
     y = state["y"]
@@ -928,11 +1027,11 @@ def _emit_point():
     now = time.time()
     t   = time.monotonic()
 
-    # Whole pen-state read-modify-write runs under _pen_lock so the watchdog
-    # thread cannot lift the pen (and null _last_plot_pt) partway through it.
+    # Whole pen-state read-modify-write runs under _pen_lock so the rest thread
+    # cannot lift the pen partway through it.
     with _pen_lock:
-        _maybe_pen_up()
-
+        # Only the state block (via _end_stroke) ends a stroke, so any point that
+        # arrives while one is open belongs to it, however long the gap before it.
         was_down = state["_pen_is_down"]
         state["_pen_is_down"]     = True
         state["_last_point_time"] = now
@@ -945,11 +1044,28 @@ def _emit_point():
         pressure_norm = min(1.0, max(0.0, state["pressure"] / OSC_PRESSURE_MAX))
         spurious = (state["pressure"] == SPURIOUS_RAW_PRESSURE)
 
+        # A run of placeholders too long to be a glitch means iDraw has no
+        # pressure reading at all: plot the run, and the rest of it, at a fixed
+        # value instead of holding the pen up waiting for a real one.
+        _spurious_run = ((_spurious_run + 1) if was_down else 1) if spurious else 0
+        if spurious and _spurious_run >= NO_PRESSURE_RUN:
+            spurious      = False
+            pressure_norm = NO_PRESSURE_VALUE
+            if _pending_024:
+                _flush_pending_024(pressure_norm, from_pressure=pressure_norm)
+                if not _show_raw_osc:
+                    print(f"[pressure] no pressure data — plotting at {NO_PRESSURE_VALUE}")
+            _stroke_has_good_pressure  = True
+            _stroke_last_good_pressure = pressure_norm
+
         if not was_down:
             # First point of a new stroke — reset filter state, queue travel, hold pen down
             _stroke_had_moves = False
             _stroke_has_good_pressure = False
             _stroke_last_good_pressure = 0.0
+            _pen_rested   = False
+            _rest_cmds    = []
+            _rest_dwelled = False
             _pending_024.clear()
             _last_plot_pt = (px, py)
             _enqueue(postprocess.moveto(t, px, py))
@@ -960,6 +1076,10 @@ def _emit_point():
                 _stroke_last_good_pressure = pressure_norm
                 _enqueue(postprocess.pendown(t, pressure_norm, px, py))
         else:
+            # Continuing after a pause: undo the rest before drawing on.
+            if _pen_rested:
+                _resume_after_rest(t, _stroke_last_good_pressure if spurious else pressure_norm)
+
             # Continuation — apply adaptive distance filter before enqueuing
             lx, ly = _last_plot_pt
             eff = _compute_effective_scale(_current_lag_sec)
@@ -1015,28 +1135,37 @@ def _handle_pressure(address, *args):
     if _show_raw_osc: _log_raw(address, *args)
     state["pressure"] = args[0]
 
+# Every handler for a state-block field calls _state_block_seen() first — see
+# STROKE BOUNDARIES.
+
 def _handle_r(address, *args):
     if _show_raw_osc: _log_raw(address, *args)
+    _state_block_seen()
     state["r"] = args[0]
 
 def _handle_g(address, *args):
     if _show_raw_osc: _log_raw(address, *args)
+    _state_block_seen()
     state["g"] = args[0]
 
 def _handle_b(address, *args):
     if _show_raw_osc: _log_raw(address, *args)
+    _state_block_seen()
     state["b"] = args[0]
 
 def _handle_a(address, *args):
     if _show_raw_osc: _log_raw(address, *args)
+    _state_block_seen()
     state["a"] = args[0]
 
 def _handle_drawing_width(address, *args):
     if _show_raw_osc: _log_raw(address, *args)
+    _state_block_seen()
     state["drawingWidth"] = args[0]
 
 def _handle_eraser_width(address, *args):
     if _show_raw_osc: _log_raw(address, *args)
+    _state_block_seen()
     state["eraserWidth"] = args[0]
 
 def _handle_aspect(address, *args):
@@ -1049,11 +1178,13 @@ def _handle_y(address, *args):
 
 def _handle_canvas_width(address, *args):
     if _show_raw_osc: _log_raw(address, *args)
+    _state_block_seen()
     state["canvasWidth"] = args[0]
     _update_mapping()
 
 def _handle_canvas_height(address, *args):
     if _show_raw_osc: _log_raw(address, *args)
+    _state_block_seen()
     state["canvasHeight"] = args[0]
     _update_mapping()
 
@@ -1074,6 +1205,7 @@ def _update_mapping():
 
 def _handle_tool_flag(address, *args):
     if _show_raw_osc: _log_raw(address, *args)
+    _state_block_seen()
     value     = args[0]
     tool_name = address.lstrip("/")
     state[tool_name] = value
@@ -1254,8 +1386,8 @@ if __name__ == "__main__":
     # Start plotter thread (separate from OSC so motors never block reception)
     threading.Thread(target=_plotter_thread,       daemon=True).start()
 
-    # Watchdog: fires pen-up when the point stream goes quiet
-    threading.Thread(target=_pen_watchdog_thread,  daemon=True).start()
+    # Rests the pen (lifts it, stroke still open) when the point stream pauses
+    threading.Thread(target=_pen_rest_thread,      daemon=True).start()
 
     # Optimizer: adapts RDP aggressiveness based on queue lag
     threading.Thread(target=_optimizer_thread,     daemon=True).start()
@@ -1263,9 +1395,15 @@ if __name__ == "__main__":
     # Lag broadcaster: sends current lag to the browser every 500 ms
     threading.Thread(target=_lag_broadcast_thread, daemon=True).start()
 
-    # Start OSC listener — blocks until Ctrl+C
+    # Start OSC listener — blocks until Ctrl+C.
+    # One thread, handling packets in arrival order. iDraw sends every value as
+    # its own packet, and the state block only works as a stroke separator if it
+    # is handled in order with the points around it — a threaded server can run
+    # handlers out of order. The handlers are quick (motion lives on the plotter
+    # thread), so one thread keeps up; a bigger receive buffer absorbs bursts.
     dispatcher = _build_dispatcher()
-    server = ThreadingOSCUDPServer(("0.0.0.0", OSC_PORT), dispatcher)
+    server = BlockingOSCUDPServer(("0.0.0.0", OSC_PORT), dispatcher)
+    server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
     print(f"[osc] Listening on 0.0.0.0:{OSC_PORT} ...")
     try:
         server.serve_forever()
