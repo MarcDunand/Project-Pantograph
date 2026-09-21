@@ -58,9 +58,9 @@ USAGE
   python dot_healer.py drawing.svg --max-gap 20
   python dot_healer.py drawing.svg --dry-run       # report only, write nothing
 
-Load the result with the preview's "plot svg" button. This is an offline,
-by-hand step — a sibling to svg_transform.py, not one of the live
-post-processors.
+Plot the result from Pantograph's Drawings tab. (The Tools tab's Heal button
+does the same thing.) This is an offline, by-hand step — a sibling to
+svg_transform.py, not one of the live post-processors.
 """
 
 import argparse
@@ -303,7 +303,7 @@ def main() -> int:
     out = args.out or args.svg.with_name(f"{args.svg.stem}_healed.svg")
     out.write_text(build_svg(rec, vw, vh), encoding="utf-8")
     print(f"[ok] wrote {out}")
-    print("     load it with the preview's 'plot svg' button")
+    print("     plot it from Pantograph's Drawings tab")
     return 0
 
 

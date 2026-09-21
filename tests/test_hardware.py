@@ -43,3 +43,28 @@ def test_quitting_releases_the_motors(tmp_path):
     assert app.quit() == 0
     assert any("XY motors disengaged" in l for l in app.lines)
     assert motor_state() == (0, 0)
+
+
+def test_motors_release_and_take_hold_again(tmp_path):
+    """
+    Disengage / re-engage, with the AxiDraw staying connected throughout.
+    (The motor pins aren't queried here: the app holds the USB port. Push the
+    carriage by hand between the two steps to feel that it really let go.)
+    """
+    from test_app import send
+
+    app = App(tmp_path, dry_run=False)
+    assert app.wait_for("[axidraw] connected"), "\n".join(app.lines)
+
+    msgs = send(app, {"type": "set_motors", "on": False}, wait=3.0)
+    off = [m for m in msgs if m["type"] == "plotter_status"][-1]
+    assert off["state"] == "connected" and off["motors"] is False
+
+    time.sleep(3)                      # long enough to push the carriage by hand
+
+    msgs = send(app, {"type": "set_motors", "on": True}, wait=3.0)
+    on = [m for m in msgs if m["type"] == "plotter_status"][-1]
+    assert on["state"] == "connected" and on["motors"] is True
+    assert app.quit() == 0
+    assert any("motors off" in l for l in app.lines)
+    assert any("this spot is home" in l for l in app.lines)

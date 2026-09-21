@@ -11,12 +11,18 @@ old code)
 A plot SVG carries a <metadata> block holding the recording as JSON:
 
     {"format": "draw2axi-recording", "version": 1,
+     "space": "paper", "paperIn": [8.5, 11],          (saved files only)
      "strokes": [{"tool", "drawingWidth", "color": {r,g,b,a},
                   "canvasWidth", "canvasHeight",
                   "points": [[t, x, y, pressureRaw], ...]}, ...]}
 
-Points are the raw OSC input, verbatim and unrounded, in that stroke's own
-canvas units. **The recording is the source of truth**: replay reads only the
+While a drawing is being made, points are the raw OSC input, verbatim and
+unrounded, in that stroke's own canvas units. A **saved** file is a picture of
+the sheet of paper instead: its points are where the pen went on the paper, at
+96 per inch, and `space: "paper"` says so (with `paperIn`, the sheet's size).
+That way the file matches what was plotted, whatever the layout was, and
+importing it puts the ink back in the same place. Older files have no `space`
+and are read as tablet coordinates, as before. **The recording is the source of truth**: importing reads only the
 metadata. The <path>/<circle> elements are cosmetic, so the file looks right in
 a viewer — drawn here as greyscale strokes on white paper, like iDraw OSC.
 """
@@ -35,7 +41,7 @@ STROKE_THINNING       = 0.5          # matches preview.py's widthFor
 DEFAULT_DRAWING_WIDTH = 1.5
 
 PAPER_COLOR     = "#fff"
-OPTIMIZED_COLOR = "#d9480f"          # the pen's optimized centerline
+OPTIMIZED_COLOR = "#f76707"          # the pen's path — the machine's own colour
 EFFECT_COLOR    = "#1c7ed6"          # what the effects add
 
 _METADATA_RE = re.compile(r"<metadata>(.*?)</metadata>", re.S)
@@ -147,7 +153,7 @@ def build_svg(rec: dict, viewport_w: float, viewport_h: float, *,
     greyscale, and optionally the derived layers ({"optimized": [...],
     "effect": [...]}) on top in their accent colours. The recording goes in
     <metadata> only when the raw layer is included — a layers-only export is a
-    plain drawing, not something replay can use.
+    plain drawing, not something that can be imported and plotted.
     """
     layers = layers or {}
     parts = []
@@ -163,34 +169,6 @@ def build_svg(rec: dict, viewport_w: float, viewport_h: float, *,
         head.append(f'  <metadata>{meta}</metadata>')
     head.append(f'  <rect width="{viewport_w:.0f}" height="{viewport_h:.0f}" fill="{PAPER_COLOR}"/>')
     return "\n".join([*head, *parts, '</svg>'])
-
-
-def thumbnail_svg(rec: dict, viewport_w: float, viewport_h: float, max_points: int = 4000) -> str:
-    """
-    A light preview for the drawings list: one polyline per stroke, decimated so
-    the whole drawing has at most ~max_points points, and no metadata. Scales to
-    any size through its viewBox.
-    """
-    strokes = [s for s in rec.get("strokes", []) if s.get("points")]
-    total = sum(len(s["points"]) for s in strokes) or 1
-    step = max(1, total // max_points)
-    parts = []
-    for s in strokes:
-        pts = s["points"][::step]
-        if pts[-1] is not s["points"][-1]:
-            pts.append(s["points"][-1])
-        grey, _ = _grey(s.get("color"))
-        w = max(1.0, s.get("drawingWidth", DEFAULT_DRAWING_WIDTH))
-        if len(pts) == 1:
-            parts.append(f'<circle cx="{pts[0][1]:.1f}" cy="{pts[0][2]:.1f}" r="{w / 2:.1f}" fill="{grey}"/>')
-        else:
-            d = " ".join(f"{p[1]:.1f},{p[2]:.1f}" for p in pts)
-            parts.append(f'<polyline points="{d}" fill="none" stroke="{grey}" stroke-width="{w:.1f}" '
-                         f'stroke-linecap="round" stroke-linejoin="round"/>')
-    return "\n".join([
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {viewport_w:.0f} {viewport_h:.0f}">',
-        f'<rect width="{viewport_w:.0f}" height="{viewport_h:.0f}" fill="{PAPER_COLOR}"/>',
-        *parts, '</svg>'])
 
 
 # ── files ────────────────────────────────────────────────────────────────────
@@ -235,7 +213,8 @@ class Recorder:
       * a new stroke starts on the first point after a pen_up;
       * a stroke's metadata (tool, width, colour, canvas) is latched at its
         first point;
-      * strokes tagged `replay` are drawn on the page but never recorded.
+      * an imported drawing arrives as ordinary points, so it becomes part of
+        the drawing, exactly as if it had been drawn on the iPad.
 
     It also keeps every message that built the picture, so a page that
     (re)connects can be brought up to date by replaying them (`messages()`).
@@ -249,7 +228,6 @@ class Recorder:
     def _reset(self):
         self._strokes: list = []           # completed recorded strokes
         self._cur: dict | None = None      # the open stroke, if any
-        self._cur_replay = False
         self._layers = {"optimized": [], "effect": []}   # strokes of [x, y, pressure] in canvas units
         self._layer_cur = {"optimized": None, "effect": None}
         self._log: list = []               # messages that rebuild the page's picture
@@ -272,7 +250,6 @@ class Recorder:
 
     def _on_point(self, msg):
         if self._cur is None:
-            self._cur_replay = bool(msg.get("replay"))
             self._cur = {
                 "tool":         msg.get("tool") or "pen",
                 "drawingWidth": msg.get("drawingWidth"),
@@ -281,20 +258,17 @@ class Recorder:
                 "canvasHeight": msg.get("canvasHeight"),
                 "points":       [],
             }
-        if self._cur_replay:
-            return
         self._cur["points"].append([msg["t"], msg["x"], msg["y"], msg["pressureRaw"]])
         self._log.append(msg)
         self.dirty = True
 
     def _on_pen_up(self, msg):
-        if self._cur is not None and not self._cur_replay:
+        if self._cur is not None:
             if self._cur["points"]:
                 self._strokes.append(self._cur)
             self._log.append(msg)
             self.dirty = True
         self._cur = None
-        self._cur_replay = False
 
     def _on_layer(self, msg):
         # Mirrors the page's handleLayer, in canvas units instead of screen pixels.
@@ -307,7 +281,7 @@ class Recorder:
         if kind in ("penup", "dot_dwell"):
             self._finish_layer(name)
             return
-        size = msg.get("drawingWidth") or DEFAULT_DRAWING_WIDTH
+        size = msg.get("width") or msg.get("drawingWidth") or DEFAULT_DRAWING_WIDTH
         if kind == "moveto":
             self._finish_layer(name)
             self._layer_cur[name] = {"size": size, "points": []}
@@ -329,13 +303,13 @@ class Recorder:
 
     def is_empty(self) -> bool:
         with self._lock:
-            return not self._strokes and not (self._cur and self._cur["points"] and not self._cur_replay)
+            return not self._strokes and not (self._cur and self._cur["points"])
 
     def recording(self) -> dict:
         """The session so far, including a stroke still in progress."""
         with self._lock:
             strokes = list(self._strokes)
-            if self._cur and self._cur["points"] and not self._cur_replay:
+            if self._cur and self._cur["points"]:
                 strokes.append(self._cur)
             return {"format": "draw2axi-recording", "version": 1,
                     "strokes": json.loads(json.dumps(strokes))}

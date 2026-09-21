@@ -140,6 +140,7 @@ def test_foreign_origin_websocket_is_refused(app):
 def test_stroke_reaches_page_and_save_stays_in_drawings_folder(app):
     async def go():
         async with websockets.connect(app.ws_url, origin=f"http://127.0.0.1:{app.ui_port}") as ws:
+            await asyncio.wait_for(ws.recv(), 5)          # hello, as a page waits for it
             send_stroke(app.osc_port)
             await ws.send(json.dumps({"type": "save_file", "filename": "../../escape.svg",
                                       "b64": base64.b64encode(b"<svg/>").decode()}))
@@ -272,29 +273,28 @@ def test_a_crash_is_recovered_on_the_next_launch(app):
         again.quit()
 
 
-def test_save_svg_builds_from_the_recording(app):
+def test_save_as_writes_where_it_is_told(app):
+    """The page normally gets a path from the Save window; tests pass one straight in."""
     send_stroke(app.osc_port)
     time.sleep(0.5)
-    msgs = send(app, {"type": "save_svg", "filename": "drawing_raw.svg",
+    out = os.path.join(app.data_dir, "chosen_name.svg")
+    msgs = send(app, {"type": "save_as", "path": out,
                       "layers": {"raw": True, "optimized": False, "effect": False}})
     saved = [m for m in msgs if m["type"] == "saved"]
-    assert saved and saved[0]["ok"]
-    text = open(os.path.join(app.data_dir, saved[0]["path"]), encoding="utf-8").read()
+    assert saved and saved[0]["ok"] and saved[0]["path"] == "chosen_name.svg"
+    text = open(out, encoding="utf-8").read()
     assert "<metadata>" in text and 'fill="#fff"' in text
 
 
-def test_replayed_drawing_is_not_recorded(app):
+def test_an_imported_drawing_becomes_part_of_the_drawing(app):
+    """One canvas: an import is drawn, recorded and saved like anything else."""
     rec = {"format": "draw2axi-recording", "version": 1, "strokes": [
         {"canvasWidth": 440.0, "canvasHeight": 956.0, "points": [[i * 0.01, 100 + i, 100, 2.0] for i in range(10)]}]}
-    msgs = send(app, {"type": "replay", "recording": rec}, wait=2.0)
-    pts = [m for m in msgs if m["type"] == "point"]
-    assert len(pts) == 10 and all(p["replay"] for p in pts)
-    # What the plotter drew for the replay (the layers) is kept for the page;
-    # the replayed input itself is not recorded a second time.
+    msgs = send(app, {"type": "import_drawing", "recording": rec, "name": "x.svg"}, wait=2.0)
+    assert len([m for m in msgs if m["type"] == "point"]) == 10
     drawing = hello(app)["drawing"]
-    assert not [m for m in drawing if m["type"] in ("point", "pen_up")]
-    assert any(m["type"] == "layer" for m in drawing)
-    assert not os.path.exists(os.path.join(app.data_dir, "autosave.svg"))
+    assert len([m for m in drawing if m["type"] == "point"]) == 10
+    assert wait_until(lambda: os.path.exists(os.path.join(app.data_dir, "autosave.svg")))
 
 
 def test_settings_persist_across_launches(app):
@@ -306,8 +306,9 @@ def test_settings_persist_across_launches(app):
         assert again.wait_for("[ui] http://127.0.0.1:")
         h = hello(again)
         assert h["settings"]["axi_penPosUp"] == "55"
-        # Applied at startup, before any page: the A3 paper fits the SE/A3 model.
-        assert h["paper"]["model"] == 2 and h["paper"]["width"] == 11.69 and not h["paper"]["clamped"]
+        # Applied at startup, before any page: the A3 sheet on the SE/A3 model.
+        assert h["paper"]["model"] == 2 and h["paper"]["width"] == 11.69
+        assert not h["layout"]["out_of_reach"]
     finally:
         again.quit()
 
@@ -333,16 +334,16 @@ def test_reloading_the_page_keeps_the_drawing_and_settings_follow_the_computer(a
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto(f"http://127.0.0.1:{app.ui_port}")
         # The page adopts the computer's settings (one reload), then shows them.
-        page.wait_for_function("document.getElementById('pen-up-val').textContent === '55'", timeout=10000)
+        page.wait_for_function("document.getElementById('inp-pen-up-val').textContent === '55'", timeout=10000)
         page.wait_for_function("document.getElementById('conn-label').textContent === 'live'", timeout=10000)
         send_stroke(app.osc_port, n=25)
         page.wait_for_function("document.getElementById('stroke-count').textContent === '1'", timeout=5000)
         page.reload()
         page.wait_for_function("document.getElementById('pt-count').textContent === '25'", timeout=10000)
         assert page.evaluate("document.getElementById('stroke-count').textContent") == "1"
-        page.evaluate("newDrawing()")
+        page.evaluate("pantograph.newDrawing()")
         page.wait_for_function("document.getElementById('pt-count').textContent === '0'", timeout=5000)
-        assert any(f.startswith("drawing-") for f in svgs(app.data_dir))
+        assert any(f.startswith("drawing-") for f in svgs(app.data_dir))   # saved on the way out
         assert not errors, errors
         browser.close()
 
@@ -367,8 +368,48 @@ def test_page_works_in_a_real_browser(app):
         send_stroke(app.osc_port, n=30)
         page.wait_for_function("document.getElementById('stroke-count').textContent === '1'", timeout=5000)
         assert page.evaluate("document.getElementById('pt-count').textContent") == "30"
-        page.evaluate("downloadSVG()")
-        page.wait_for_function("document.getElementById('dl-btn').textContent.startsWith('saved')", timeout=5000)
+        page.evaluate("pantograph.newDrawing()")
+        page.wait_for_function("document.getElementById('pt-count').textContent === '0'", timeout=5000)
         assert [f for f in os.listdir(app.data_dir) if f.endswith(".svg")]
         assert not errors, errors
         browser.close()
+
+
+def test_page_works_in_webkit(app):
+    """Safari's engine (the one a native window would use on a Mac). Skipped unless
+    `playwright install webkit` has been run."""
+    sync_api = pytest.importorskip("playwright.sync_api")
+    with sync_api.sync_playwright() as pw:
+        try:
+            browser = pw.webkit.launch(headless=True)
+        except Exception:                        # noqa: BLE001
+            pytest.skip("WebKit isn't installed (python -m playwright install webkit)")
+        errors = []
+        page = browser.new_page()
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"http://127.0.0.1:{app.ui_port}")
+        page.wait_for_function("document.getElementById('conn-label').textContent === 'live'", timeout=10000)
+        send_stroke(app.osc_port, n=30)
+        page.wait_for_function("document.getElementById('pt-count').textContent === '30'", timeout=5000)
+        page.click("#menu-prefs-btn")
+        page.click("#mi-prefs")
+        assert page.is_visible("#prefs-window")
+        page.click("#prefs-window .close-window")
+        page.click("#plotter-btn")
+        assert page.is_visible("#plotter-panel")
+        assert not errors, errors
+        browser.close()
+
+
+def test_help_prints_on_a_console_that_is_not_utf8():
+    """
+    A first-time Windows user's console is cp1252, and --help contains "→".
+    Reconfiguring the streams happens in setup_logging, which runs long after
+    argparse has already printed and exited.
+    """
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "listen_to_idraw.py"), "--help"],
+                       capture_output=True, text=True, env=env, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert "UnicodeEncodeError" not in r.stderr
+    assert "--dry-run" in r.stdout

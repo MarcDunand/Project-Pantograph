@@ -66,18 +66,32 @@ def resolve_paths(data_dir: str | None = None) -> Paths:
 
 # ── logging ──────────────────────────────────────────────────────────────────
 
+def use_utf8_console() -> None:
+    """
+    Make stdout and stderr accept the characters we actually print.
+
+    Log lines and the --help text contain ≈ → × —. Without this, printing them
+    to anything that isn't a UTF-8 console (a pipe, a redirect, a fresh Windows
+    console at cp1252) raises UnicodeEncodeError — inside an OSC handler
+    mid-stroke, or on `--help` before anything has started.
+
+    Safe to call more than once, and early: it touches nothing else.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):        # a stream that can't be changed
+                pass
+
+
 def setup_logging(logs_dir: Path, verbose: bool = False) -> Path:
     """
     Console + rotating log file for the "pantograph" logger. INFO and up by
     default; DEBUG (every point and plotter move) with --verbose. Returns the
     log file's path.
     """
-    # Log lines contain ≈ → × —. Without this, printing them to anything that
-    # isn't a UTF-8 console (a pipe, a redirect, a cp1252 console) raises
-    # UnicodeEncodeError — inside an OSC handler, mid-stroke.
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", errors="replace")
+    use_utf8_console()
 
     level = logging.DEBUG if verbose else logging.INFO
     logger = logging.getLogger("pantograph")
@@ -134,6 +148,23 @@ def forget_instance(runtime: Path) -> None:
 
 
 # ── the UI ───────────────────────────────────────────────────────────────────
+
+def ask_running(url: str, message: dict, reply_type: str, timeout: float = 10.0) -> dict | None:
+    """
+    Send one message to a running copy over its WebSocket (the way the page
+    does) and return its reply of type `reply_type`, or None if it didn't answer.
+    """
+    from websockets.sync.client import connect
+    try:
+        with connect(url.replace("http://", "ws://") + "/ws", open_timeout=timeout) as ws:
+            ws.send(json.dumps(message))
+            while True:
+                reply = json.loads(ws.recv(timeout=timeout))
+                if reply.get("type") == reply_type:
+                    return reply
+    except Exception:            # noqa: BLE001 — not answering is all the caller needs to know
+        return None
+
 
 def open_ui(url: str, enabled: bool = True) -> None:
     """

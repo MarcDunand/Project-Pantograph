@@ -7,10 +7,10 @@ phase ends with a checkpoint, and nothing moves on until that checkpoint passes.
 **Keep this file current as work lands:** tick boxes, record decisions, add
 gotchas.
 
-**Status:** Phases −1 to 4 are done (2026-09-19), apart from checks that
-need the real AxiDraw (listed just below). **Phase 5 (the UI) is next.** The
-pressure-lag fix is deferred until an Apple Pencil is available (see
-Phase −1).
+**Status:** Phases −1 to 7 are done, apart from the checks below.
+Marc's first UI review (2026-09-20) has been worked through — see "UI round 2"
+in Phase 5. **Phase 8 (launchers and installers) is next.** The pressure-lag
+fix is deferred until an Apple Pencil is available (see Phase −1).
 
 **Hardware checks.** These can't be verified without the iPad and AxiDraw.
 Marc's session on 2026-09-19 covered the first five:
@@ -20,12 +20,11 @@ Marc's session on 2026-09-19 covered the first five:
       freezing, and the app keeps running.
 - [x] Phase 1: with the AxiDraw unplugged at startup, the console reports
       `not_found`.
+- [x] Phase 1 (2026-09-20): closing the console window mid-plot lifts the pen
+      **and** releases the motors. The `res_home2` bug is fixed.
 - [x] Phase 3: plotting a saved SVG ("plot svg") plots it once, not twice.
-- [ ] **Phase 1, re-check after a fix:** closing the console window mid-plot
-      lifts the pen **and releases the motors** (the carriage can be pushed by
-      hand). **Restart the app first**, so it runs the fixed code. (Marc's
-      second try at 01:47 ran an app started at 01:40, before the fix was
-      saved at 01:42.)
+- [x] **Phase 1, re-check after a fix (PASSED 2026-09-20):** closing the
+      console window mid-plot lifts the pen **and releases the motors**.
   - **09-19 result:** the pen lifted but the motors stayed engaged, twice.
   - **Real cause, pre-existing since before the app work:** the shutdown
     code disengaged the motors by running pyaxidraw in mode `"res_home2"`,
@@ -47,6 +46,82 @@ Marc's session on 2026-09-19 covered the first five:
     carriage). The console-close path runs the same function, and shutdown
     takes under a second, so the remaining check is Marc closing the window
     on a freshly started app.
+
+**Checks from Phases 5–7 — run on the machine 2026-09-20, all passed**
+unless marked otherwise:
+- [x] **UI review (Phase 5 checkpoint).** The round of changes it produced is
+      in "UI, round 4" below.
+- [x] iPad button: *Waiting* before the first stroke, then *Receiving* while
+      drawing and *Idle* between strokes. The first-run card (IP and port) goes
+      away once the iPad sends anything.
+- [x] Plotter controller: **Disengage XY Motors** → the carriage pushes freely
+      (the AxiDraw stays connected) → **Re-engage XY Motors** → home is
+      unchanged, so **Walk Home** returns to the old corner; **Set Home** makes
+      the current spot home instead.
+- [x] "Plotter behind" counts up while you draw faster than the plotter, and
+      counts down whenever you stop, reaching 0 as it catches up.
+- [x] The progress bar follows the *pen*, not the feed: it should still be
+      climbing while the plotter works, and reach 100% as the pen finishes.
+- [x] Open file… opens the system's Open window at the drawings folder (and at
+      the last folder used, after that); the preview shows the drawing;
+      **Import to canvas** plots it onto the canvas.
+- [x] **Re-check after the G-49 fix (PASSED 2026-09-21):** drawing on the iPad
+      while an import plots — the strokes appear at once and are plotted behind
+      the import.
+- [x] **Save as…** opens the system's Save window; **New drawing** on an
+      unsaved drawing offers Save as… / Discard.
+- [x] The canvas is the paper: the rulers match a real ruler held against the
+      plot, in inches and in mm.
+- [x] Heal dots automatically (Preferences): a line torn into dots comes out as
+      one line.
+- [x] **Edit layout** (Preferences): move and turn the orange AxiDraw rectangle
+      to where the machine really sits on the sheet, and the turquoise drawing
+      rectangle to where it should be plotted. Then plot: the ink lands where
+      the screen said it would, measured with a ruler.
+- [x] The layout survives quitting and restarting.
+- [x] A drawing partly outside the machine's reach: the warning appears, and
+      the part outside simply isn't drawn (the stroke stops at the edge and
+      picks up again where it comes back within reach).
+- [x] File → Import to canvas… → **Import**: the progress bar moves;
+      **Pause** lifts the pen and stops the carriage; **Resume** puts the pen
+      back down where it was and carries on; **Cancel** lifts the pen and
+      leaves no stray dot. (The line of text under the bar always read
+      "Finishing"; it has been removed rather than fixed, since the bar and the
+      count already say everything.)
+- [x] Paper and model dropdowns: pick A3 on the V3 model → the "reaches"
+      note appears; switch the model to SE/A3 → it goes away.
+
+**UI round 4 (2026-09-20).** From Marc's pass with the iPad and AxiDraw:
+
+- **Speed and acceleration are settings** (Preferences → Speed), in the
+  AxiDraw's own units: speeds 1–110, acceleration 1–100, defaulting to the
+  machine's stock 25 / 75 / 75. They were hard-coded at 15 / 25 / 50 — slower
+  and gentler than stock — so the defaults change what the machine does; the
+  old numbers are typed back in to reproduce earlier plots. A change is applied
+  by the plotter thread, which owns the USB handle (`_speeds_request`).
+- **The machine controls read as machine commands**: Walk Home, Set Home,
+  Disengage XY Motors, on one line, with the explanation under them removed.
+- **The opened drawing is a window over the app**, not a screen that replaces
+  it — the canvas it is joining stays visible behind it.
+- **The line of text under the import's progress bar is gone.** It always read
+  "Finishing", and the bar and the count already say what it said.
+- **Resuming after a pause dwells 0.3 s** between putting the pen down and
+  moving again (`RESUME_DWELL_SEC`), so the pen is properly seated before the
+  line carries on. Nothing else dwells on pen down: a live stroke has to keep
+  up with the hand drawing it. **Checked on the machine 2026-09-21:** the
+  joint after a resume is clean.
+- **Checked on the machine 2026-09-21:** the stock 25 / 75 / 75 plots fine, so
+  the old hard-coded 15 / 25 / 50 was caution rather than a requirement.
+- Each machine button is as wide as its own label. They were one shared width
+  first, and "Re-engage XY Motors" spilled outside its border.
+
+**What Pantograph is (Marc, 2026-09-20).** A translator between physical and
+digital media — a pantograph — not an SVG editor. A feature earns its place by
+matching something you can do with a pen and the machine: you can't
+retroactively remove lines or heal a broken one, so the app doesn't either.
+This is why the Tools tab was deleted, why an import joins the one canvas
+rather than opening a second document, and why the layout editor replaced the
+flip settings (a machine can be turned on a desk; it can't be mirrored).
 
 **Scope rule: this is a public demo, not a launch product.** Few users are
 expected. When a choice is between saving time and adding polish, choose
@@ -196,10 +271,12 @@ iPad (iDraw OSC) ──UDP :8800──► listen_to_idraw.py  (engine, backgroun
   preview.py           server: one port, static files + WebSocket, security checks
   recording.py   NEW   the ONE Python implementation of draw2axi-recording:
                        live recorder, load, build SVG, thumbnails
+  layout.py      NEW   where the drawing and the machine sit on the paper, and
+                       the one path from a tablet point to the machine
   postprocess.py       unchanged
   svg_transform.py     transform functions unchanged; load/build re-exported from
-                       recording.py; tkinter GUI removed; the command opens the
-                       app's Tools tab
+                       recording.py; tkinter GUI removed; a command-line tool,
+                       and running it with a file opens that file in the app
   dot_healer.py        unchanged apart from importing from recording.py
   pyproject.toml NEW   dependencies (shared by plain-Python runs and the app)
   uv.lock        NEW   exact pinned versions + hashes
@@ -221,7 +298,8 @@ iPad (iDraw OSC) ──UDP :8800──► listen_to_idraw.py  (engine, backgroun
     shell.py           data dirs, single-instance check, open_ui(), exit handlers, log file
     settings.py        settings store (JSON on disk, defaults)
     netinfo.py         local IP list
-    ui/                index.html, app.js, style.css
+    dialogs.py   NEW   the system's own Open and Save windows (main thread only)
+    ui/                index.html, app.js, app.css, icon.svg
 ```
 
 `pyproject.toml` goes at the root because it serves plain-Python runs as well
@@ -399,9 +477,9 @@ Done 2026-09-19. In `preview.py`, `PantographApp/shell.py` and
       `Cache-Control: no-store`. `/ws` continues into the WebSocket handshake.
       `max_size` stays 64 MB. The page connects to
       `ws://' + location.host + '/ws'`, so it never needs to know the port.
-      **Still to come:** `/ui/*` (Phase 5, when the UI moves into files) and
-      `/drawings/<name>` for thumbnails (Phase 6), each with the
-      path-traversal guard.
+      Since Phase 5/6 it also serves `/ui/<name>` (the page's files),
+      `/drawings/<name>` and `/thumb/<name>` (see Phase 6), each accepting
+      only a plain file name in its own folder.
 - [x] **Security:** the `Host` header must be `127.0.0.1:<port>` or
       `localhost:<port>` (else 403: DNS rebinding). WebSocket `origins` are
       those two plus `None` (a missing Origin means a local program).
@@ -413,8 +491,8 @@ Done 2026-09-19. In `preview.py`, `PantographApp/shell.py` and
       `forget_instance` (`runtime/instance.json` with port + PID, checked via
       `/health`). A second launch opens the first copy's UI and exits 0.
       `instance.json` is removed by shutdown (via a new `_shutdown_hooks`
-      list). The `svg_transform.py` "already running" message comes with
-      Phase 6.
+      list). Since Phase 6, `--open FILE` hands the file to the running
+      copy over its WebSocket (`shell.ask_running`) before opening its UI.
 - [x] **Saving over the WebSocket:** `POST /save` is gone. The page sends
       `save_file {filename, b64}` (PNG and SVG both, for now) and gets
       `saved {ok, path}` back. File names are still sanitized to a basename,
@@ -590,136 +668,250 @@ Done 2026-09-19.
 
 ### Phase 5: The UI
 
-First move the UI, then restyle it, as separate commits.
+Done 2026-09-19, apart from Marc's review. The page is `PantographApp/ui/`
+(`index.html`, `app.css`, `app.js`, `icon.svg`), served as plain files.
 
-- [ ] **5a, move:** move the HTML, CSS and JS out of `preview.py` into
-      `PantographApp/ui/`. Replace the placeholder substitution with `hello`.
-      Change nothing visible.
-- [ ] **5b, restyle and reorganize:**
-  - **Top bar:** app name; **iPad** and **Plotter** status buttons; the IP and
-    port for iDraw (copyable); lag; **Quit**.
-  - **Status buttons:** a coloured dot and a label. A click opens a small
-    panel.
-    - **iPad:** *Waiting* (nothing received yet), *Receiving*, *Idle*
-      (received before; normal between strokes), or *Problem* (port busy).
-      Actions: Restart listener, Change OSC port (with a reminder to change
-      it in iDraw too), Troubleshoot. There's nothing to "dial": the iPad
-      sends to us over UDP.
-    - **Plotter:** *Connected*, *Not found*, *Error* (with the message), *No
-      pyaxidraw*, or *Dry run*. Actions: Connect, Home, Disengage motors,
-      Troubleshoot.
-  - **Troubleshoot (required in both panels):** a numbered checklist on one
-    panel, with the live status dot at the top so the user sees the moment
-    it's fixed, plus a "Copy diagnostics" button (version, OS, IPs, port,
-    statuses, recent log lines).
-    - **iPad checklist:**
-      1. iDraw OSC is open, with this IP and port (shown, copyable).
-      2. Both devices are on the same Wi-Fi.
-      3. Windows: the Wi-Fi is set to **Private**, not Public. Say how to
-         change it.
-      4. The firewall prompt was answered "Allow". If it was cancelled, give
-         the steps to allow Python in Windows Defender Firewall (or the Mac
-         firewall, which is off by default).
-      5. Nothing else is using port 8800.
-      6. **Some school, work, hotel and guest networks block devices from
-         reaching each other.** Try a phone hotspot to confirm; the fix is a
-         different network or Tailscale (see the README).
-      7. Restart the listener and draw a stroke.
-    - **Plotter checklist:**
-      1. USB is plugged in, **and** the AxiDraw's own power supply is on (USB
-         alone doesn't power the motors).
-      2. Try another USB port or cable (some cables are charge-only).
-      3. Close other programs using the AxiDraw (Inkscape's extension, or a
-         second Pantograph).
-      4. pyaxidraw is installed (the app shows this).
-      5. Press Connect, and read the exact error if it fails.
-      6. Try Pen test up/down.
-  - **Center:** the live canvas as white paper with greyscale strokes. The
-    optimized and effect layers are overlays in two accent colours, with
-    toggles.
-  - **Sidebar tabs:**
-    - **Plot:** paper and model, pen positions with tests, variable
-      pressure, tilt, flip, optimizer, Home, effects only.
-    - **Effects:** built from `postprocess.effect_specs()`, as today.
-    - **Tools:** flip H/V, minimum-width filter, heal dots (with its report).
-      Each saves a new file and opens it.
-    - **Clear without saving** (added 2026-09-19, Marc): next to "new
-      drawing", a way to clear the preview and start fresh *without*
-      keeping what's there, since "new drawing" always saves. It needs an
-      in-page confirmation ("Discard this drawing?"; no `confirm()`, per the
-      1B rules), because it's the one action that deletes work. Backend: a
-      `discard_drawing` message → `Recorder.clear()`, delete `autosave.svg`,
-      broadcast `new_drawing` with `saved: null` (the pages already handle
-      that).
-    - **Replay controls** (added 2026-09-19, Marc): while a saved drawing is
-      plotting ("plot svg"), show its progress with **Pause/Resume** and
-      **Cancel** (backend in Phase 6).
-    - **Drawings:** a list of saved drawings (name, date, thumbnail), with
-      Open and Plot; an "Open drawings folder" button; and "Open file…" to
-      load an SVG from elsewhere (it replaces today's "plot svg").
-  - **First run:** until the first OSC message arrives, the canvas shows the
-    iDraw setup steps with this machine's IP and port, plus a link to
-    Troubleshoot.
-  - **Look:** CSS variables for colours and spacing, the system font, a light
-    paper-like theme, and consistent controls. Nothing beyond that is needed
-    for the demo.
-- [ ] Rules that keep 1B easy (§7): no `<a download>`, blob downloads,
-      `window.open`, `alert()` or `confirm()`; everything the page needs
-      comes from `hello`.
-- [ ] Check it in Chrome/Edge and Safari (Safari's engine is the one 1B uses
-      on Mac).
-- **Checkpoint:** Marc reviews the UI on real hardware.
+- [x] **5a, move.** The page left `preview.py`. The effect list, the IP list,
+      the AxiDraw models and everything else now arrive in `hello`; the
+      `EFFECT_SPECS_PLACEHOLDER` substitution is gone. *5a and 5b landed
+      together:* commits are Marc's, so there was no point splitting them.
+- [x] **5b, restyle and reorganize.** What was built:
+  - **Look:** the drawing is white paper on a cool grey "drafting table";
+    strokes are each stroke's colour as a grey of the same brightness (the
+    same rule as the saved SVG). Accents are only the plotter's layers
+    (orange pen path `#d9480f`, blue effects `#1c7ed6`, as in the SVGs);
+    controls are dark ink. System font, monospace for numbers. Light only,
+    on purpose: the page is paper. The logo is a small pantograph linkage,
+    and the paper's caption gives its size in inches and the AxiDraw model.
+  - **Top bar:** name; **iPad** and **Plotter** status buttons (coloured dot
+    plus a word); `iDraw → <IP> port <port>` with Copy IP; plotter lag;
+    "live"/"reconnecting…" (the page's own link); **Quit** (asks first; the
+    page then says Pantograph has stopped).
+  - **iPad panel:** *Waiting / Receiving / Idle / Problem / Stopped* with a
+    short line of detail, the address to type in (plus Tailscale if present;
+    other adapters fold away under "Other addresses", since they're rarely the
+    answer), Restart listener, the port box — which applies itself two seconds
+    after the number stops changing, no button, keyboard entry only (saved as
+    `axi_oscPort`; `--osc-port` still wins) — and the Troubleshoot checklist (the 7 steps, with the live IP and port filled in;
+    the Windows or Mac variant of the firewall steps, picked from the
+    browser) and **Copy diagnostics**.
+  - **Plotter panel:** *Connected / Not found / Error / No pyaxidraw / Dry
+    run*, plus *Motors off* while connected, the engine's message, Connect
+    (Reconnect when connected), Home, **Disengage / Re-engage motors**,
+    Troubleshoot (the 6 steps) and Copy diagnostics.
+  - **Stage:** the paper, sized to fit; layer chips (Drawing / Pen path /
+    Effects) choose what's shown **and** what Save SVG/PNG includes (one
+    control instead of the old separate download tickboxes), each with an
+    **i** button explaining what that layer is. The pen path is
+    off by default, since it sits exactly on top of the drawing. Below: New
+    drawing, **Discard…** (in-page confirm), Save SVG, Save PNG (now on white).
+  - **Sidebar tabs:** Plot (model, paper presets + custom inches with the
+    "reaches" note, Home, pen positions with Test buttons, variable pressure,
+    flip, tilt, "Keeping up" (the optimizer), preview size under a fold,
+    Reset); Effects (built from `effect_specs`, **Effects only** at the top:
+    it sits with the effects rather than in Plot); Tools; Drawings.
+  - **Replay card** above the tabs while a saved drawing plots: name,
+    `done / total`, a bar, Pause/Resume and Cancel (asks first).
+  - **First run:** a card over the paper with the iDraw steps, this machine's
+    IP and port in large type, and a link that opens the iPad Troubleshoot,
+    shown until anything arrives from the iPad.
+  - **Greyed out** when the plotter isn't connected (dry run counts as
+    connected): pen tests, Home and Plot buttons; Home and Plot are also out
+    while the motors are released, and Plot while another plot runs. Each
+    says why on hover.
+  - **Wording:** labels and messages are kept to a functional line —
+    "Paused, pen up", "Last point 4 s ago" — after Marc found the first pass
+    wordy (2026-09-20).
+  - **Viewer:** Open (Drawings tab, a tool's result, an imported file) shows
+    that SVG in place of the live paper, with "Plot it" and "Back to live
+    drawing". A live stroke arriving switches back automatically.
+- [x] 1B rules (§7): no `<a download>`, blob downloads, `window.open`,
+      `alert()` or `confirm()` (the one `ask()` dialog is in-page); the
+      clipboard has a textarea fallback for older webviews.
+- [x] Checked in Edge (headless, `tests/test_app.py`) and in **WebKit**,
+      Safari's engine, via Playwright (`test_page_works_in_webkit`; needs
+      `python -m playwright install webkit` once, else skipped). Real Safari
+      on a real Mac is still part of the Phase 10 Mac session.
+- **Checkpoint:** Marc reviewed it on 2026-09-20; everything below came out
+  of that review.
+
+**UI round 2 (2026-09-20).** What changed, and why:
+- **The canvas is the paper.** It used to be the iPad's canvas; now it's the
+  paper at its set size, with the iPad's canvas fitted onto it the way the
+  engine fits it, and rulers down the left and along the bottom that switch
+  between inches and mm (`axi_units`). So the preview shows where the pen
+  actually goes. The preview-size and origin settings are gone with it, and
+  the page asks for the drawing again (`hello_again`) when the paper changes,
+  since resizing a canvas clears it.
+- **The pen path appears as the pen draws it.** The layer messages used to go
+  out when a command was *queued*, so the orange path raced ahead of the
+  machine. Each queued command now carries its own layer message and the
+  plotter sends it as it runs the command (`Queued`). In effects-only mode the
+  base line is never queued, so the pen path no longer shows there — right,
+  since the pen doesn't follow it.
+- **One canvas.** Opening a file shows it in a preview panel with **Import to
+  live drawing** / **Back**. Importing plots it *and* records it, so it joins
+  the drawing exactly as if it had been drawn. The Drawings tab, its
+  thumbnails and its list are gone; Open file… sits in the Plot tab and uses
+  the system's Open window (`PantographApp/dialogs.py`), starting at the
+  drawings folder and then at the last folder used (`axi_lastOpenDir`).
+- **Saving.** Save SVG / Save PNG are gone. One **Save as…** between New
+  drawing and Clear opens the system's Save window and writes the SVG
+  (`axi_lastSaveDir`); PNG export is dropped, since the SVG is the format that
+  can be replotted and edited. **Clear** replaces Discard, and **New drawing**
+  offers Save as… / Discard when the drawing isn't saved.
+- **Motors and home.** Disengage/Re-engage no longer moves home; a separate
+  **Set as home** in the Plotter panel makes the carriage's spot home.
+- **The port box** applies itself two seconds after the number stops changing.
+- **The i buttons** are small filled circles inside the control they explain.
+- **Wording** is shorter throughout.
+
+**UI round 3 (2026-09-20).** The second review, and the principle above:
+- **A menu bar**, the standard layout for a creative tool: a slim second bar
+  under the status bar. **File** (New canvas, Import to canvas…, Save as…,
+  Discard canvas), **Preferences** (Plotter preferences…, Edit layout…, Heal
+  dots automatically) and **Effects** (the effects window). "Drawing" became
+  "canvas" throughout.
+- **The right panel is the plotter controller** and nothing else: Home the
+  carriage, the machine and paper, and the three pen positions with their
+  tests. Everything else moved into the Plotter preferences window (pressure
+  updates, tilt, keeping up, reset) or the Effects window.
+- **The layout editor** (`layout.py`, and the same arithmetic in `app.js`).
+  The paper is the anchor and never moves. Two rectangles sit on it: the
+  **drawing** (turquoise, with its top edge marked; move, turn, scale) and the
+  **AxiDraw** (orange, with a house at its home corner; move, turn — its size
+  is the model's reach). Editing is behind Preferences → Edit layout…, with
+  Fit to paper / Cancel / Done, and the layout is saved (`axi_layout`).
+  Turning the machine's rectangle is what replaced flip H/V.
+  - The canvases extend 1.5″ past the paper, so a machine bigger than the
+    sheet — and the handles — are still on screen; the white sheet is its own
+    element underneath.
+  - Out of reach is shown while editing and in the controller, and those
+    points **aren't drawn at all** (changed 2026-09-20 from clamping them to
+    the edge, which piled ink up along it): the stroke ends at the edge and
+    starts again where the pen comes back within reach, as it would if the
+    paper ran out.
+- **The Tools tab is gone** — flip, minimum-width filter and heal dots. They
+  were retroactive edits to a finished drawing. `svg_transform.py` and
+  `dot_healer.py` remain as command-line tools outside the app, and Heal dots
+  stays, because it changes what the pen does *while* drawing.
+- **A saved file is the sheet, not the tablet** (Marc, 2026-09-20: a turned
+  layout plotted correctly but saved unturned). `_paper_space_svg` writes the
+  points where the pen went on the paper, at 96 per inch, with `space:
+  "paper"` and `paperIn` in the recording; the viewport is the sheet. So the
+  file matches what was plotted, and `_to_canvas_space` puts an imported one
+  back in exactly the same place whatever the layout is now. Files without
+  `space` are read as tablet coordinates, as before.
+- Smaller details from the same review: **Home machine** (was "Home the
+  carriage"), **Heal dots** with its own i button, i buttons shrunk to a
+  superscript, thinner rectangles with a curved double-arrow turn handle on a
+  short stem and quiet "ipad"/"plotter" labels that turn with them, and the
+  coarse ruler unit labelled **cm** (it was always centimetres, mislabelled
+  mm).
+- `thumbnail_svg` went with the drawings list that used it.
 
 ### Phase 6: Tools and drawings backend
 
-- [ ] WebSocket handlers: `library_list`, `library_open`, `open_folder`
-      (`explorer` / `open`), `open_file` (the file's contents, sent from the
-      page's file picker), `tool_apply` (saves a new file, never overwriting,
-      with suffixes `_flipped`, `_minWidth<N>` and `_healed` as the CLIs use
-      today), and `plot_drawing` (the existing replay path).
-- [ ] Tools run on the open drawing: the live session, or a saved one.
-- [ ] **Pause/resume and cancel a replay plot** (added 2026-09-19, Marc).
-      `_replay_recording` runs on its own thread and only *feeds* points; the
-      plotter may be seconds behind it. So:
-  - **Pause** must stop both the replay thread feeding points and the plotter
-    thread taking commands (an `Event` each checks); the pen rests (lifts)
-    while paused. **Resume** clears both.
-  - **Cancel** stops the replay thread (a flag checked per point), discards the
-    queue, lifts the pen (and ends the open stroke so its effects don't fire
-    oddly), and leaves the app ready to draw. Live drawing during a paused
-    replay shouldn't be possible, or should cancel the replay first. Decide
-    this when building it.
-  - Messages: `replay_pause`, `replay_resume`, `replay_cancel`;
-    `replay_progress {done, total, paused}` broadcast every ~0.5 s for the
-    progress bar.
-- [ ] Transforms and heals run on a worker thread, so the WebSocket never
-      blocks.
-- [ ] Thumbnails: `thumbnail_svg()`, cached next to the drawing and rebuilt if
-      the drawing is newer.
-- [ ] Flags `--open <file>` and `--tab <name>`.
-      **`python svg_transform.py [file.svg]`** starts the app with them (or
-      prints the "already running" message from Phase 2). `--selftest` stays.
-      The tkinter code is removed. `python dot_healer.py` stays a CLI,
-      unchanged.
-- **Checkpoint:** everything `svg_transform.py` and `dot_healer.py` do works
-  from the UI, and the output files match the CLIs'.
+Done 2026-09-19 (hardware checks at the top). In `listen_to_idraw.py` and
+`PantographApp/library.py`.
+
+- [x] **WebSocket messages:** `library_list`, `open_folder` (Explorer /
+      Finder), `import_file` (`{filename, text}` from the page's picker, or
+      `{path}` from `--open`; copied into the drawings folder under a
+      non-clashing name, refused unless it holds a recording), `plot_drawing
+      {name}`, `tool_apply {tool, source, percent}`, `discard_drawing`,
+      `disengage_motors`, `diagnostics`, and `replay_pause` / `replay_resume`
+      / `replay_cancel`. Replies: `library`, `imported`, `tool_result`,
+      `diagnostics`, `error`; broadcasts: `library_changed`,
+      `replay_progress`.
+- [x] **Motors are separate from the connection** (`set_motors`, reworked
+      2026-09-20 after Marc asked why disengaging disconnected). Releasing
+      them lifts the pen, cuts the XY motors and drops the queue (those moves
+      were planned from where the carriage used to be); the AxiDraw stays
+      connected, and moves are dropped while they're off (the pen still works:
+      it's a servo). Re-engaging calls pyaxidraw's `enable_motors()` and zeroes
+      its tracked position, so wherever the carriage was pushed to is home —
+      which is what it was pushed for. `plotter_status` carries
+      `motors: true/false`.
+- [x] **Names from the page** go through `library.resolve()`: a plain `.svg`
+      file name that exists in the drawings folder, nothing else (tested with
+      `../` and URL-encoded variants).
+- [x] **Tools** run on the drawing shown: a saved one (`source` = its name)
+      or the live session (`source` = null). They save
+      `<stem>_flipH.svg`, `_flipV`, `_minWidth<N>`, `_healed`, never
+      overwriting. (The guide said "as the CLIs use today", but only
+      `dot_healer` had a suffix; svg_transform's GUI asked for a name. The
+      heal output matches the committed `drawing_dense_healed.svg`
+      exactly: tested.)
+- [x] **Worker thread:** `tool_apply` returns a `Future`; `preview.py` sends
+      its result when it's ready, so a 9 MB heal (~5 s) never blocks the
+      WebSocket.
+- [x] **Thumbnails:** `/thumb/<name>`, built with `thumbnail_svg()` and
+      cached **in memory** by name and modification time. (Not next to the
+      drawings, as planned: that folder is the user's, and cache files would
+      clutter it.) `/drawings/<name>` serves the file for the viewer. Both
+      are sent with `Content-Security-Policy: sandbox`, since an imported SVG
+      could carry script.
+- [x] **Pause/resume and cancel a replay.** One replay at a time
+      (`start_replay` refuses a second). The replay thread checks
+      `_replay_cancel` per point and waits while `_replay_pause` is set.
+  - **Plotter while paused:** lifts the pen once and waits; on resume the pen
+    goes back down only if the next command draws, so a cancel after a pause
+    never leaves a dot. The optimizer skips while paused, and on resume the
+    queued commands' timestamps move forward by the pause (the pen-rest
+    commands, tracked by identity, are remapped too), or the pause would read
+    as lag and thin the drawing.
+  - **Cancel** empties the queue *before* un-pausing (else the plotter would
+    draw what's queued in that moment), then the replay thread ends the
+    stroke, clears the queue again, queues a pen-up and rebuilds the effects.
+  - **The iPad keeps working during an import** (reversed 2026-09-20, when
+    imports became part of the live drawing). Both would write the same pen
+    state, so a stroke drawn during an import is shown and recorded
+    immediately and *plotted* once the import has been fed in
+    (`_capture_live_point` → `_flush_live_strokes`). The queue is in order, so
+    it lands behind the import — "queued", like any stroke.
+  - A replay counts as running until the plotter has drawn everything it
+    was fed (`phase: "finishing"`). Progress counts points fed.
+- [x] **Flags `--open FILE` and `--tab NAME`**, carried to the page as
+      `#tab=…&open=…` (`shell.ui_url`). **`python svg_transform.py
+      [file.svg]`** runs the app with `--tab tools --open file.svg`; with a
+      copy already running, the file is handed to it (`shell.ask_running`).
+      The tkinter GUI is removed; `--selftest` stays. `python dot_healer.py`
+      is unchanged.
+- **Checkpoint:** passed at the time. **Superseded on 2026-09-20:** the Tools
+  tab was deleted (see round 3 in Phase 5), so `svg_transform.py` and
+  `dot_healer.py` are command-line tools again, with their own tests
+  (`tests/test_recordings.py`).
 
 ### Phase 7: IP list and port errors
 
-In `PantographApp/netinfo.py`.
+Done 2026-09-19, in `PantographApp/netinfo.py`, pulled forward because the
+top bar and the checklist need it.
 
-- [ ] **Local IPs:**
-  - the primary one via the UDP "connect" trick (no packet is sent);
-  - all others from `socket.getaddrinfo(hostname)`, labelling `100.64.0.0/10`
-    as Tailscale;
-  - `169.254.*` hidden;
-  - if there's no internet, the full list.
-- [ ] **OSC port busy:** if binding 8800 fails, the iPad status shows
-      *Problem: port 8800 in use*, and its panel offers Change OSC port.
-- **Checkpoint:** the IP shown matches `ipconfig`; a busy 8800 shows the
-  problem state.
+- [x] **Local IPs:** the primary one via the UDP "connect" trick (no packet
+      is sent), then the rest from `getaddrinfo(hostname)`. `100.64.0.0/10`
+      is labelled Tailscale, other non-primary ones "other adapter (VPN,
+      wired…)"; `127.*` and `169.254.*` are hidden. Offline, whatever the host
+      name gives is listed. The engine caches the list for 10 s.
+      Checked against `ipconfig` on Marc's PC: `10.0.0.173` (primary) and a
+      `26.x` VPN-style adapter, both found.
+- [x] **OSC port busy:** the iPad button shows *Problem* with the message,
+      and its panel offers Change port (Phase 1 already reported
+      `port_busy`; tested in `test_busy_osc_port_is_reported_not_fatal`).
+- **Checkpoint:** passed on Marc's PC.
 
 ### Phase 8: Launchers and installers
+
+**Windows only for the demo (Marc, 2026-09-21).** macOS is still wanted later,
+so `Pantograph.command` and `install-mac.sh` stay specified below but unbuilt.
+Anything shared — finding the project root, the uv runtime folder, the launch
+arguments — is written platform-neutral, so the Mac versions are a
+transcription rather than a redesign.
+
+**One trap this phase introduces.** The launcher runs `uv run --locked`, which
+refuses to start if `pyproject.toml` and `uv.lock` disagree. Adding a
+dependency without running `uv lock` leaves the repo working and the installed
+app dead on launch. Re-lock and commit the lock with any dependency change.
 
 **Launchers** (`Pantograph.bat`, `Pantograph.command`) are what actually start
 the app. Both installers and the click route end by running one. Both
@@ -841,11 +1033,27 @@ For the release notes:
 - Fast strokes no longer tear into dots (Phase −1).
 - Finger strokes plot (Phase −1).
 - Drawings survive a page reload, and the current drawing is autosaved.
-- "Clear" becomes "New drawing", which saves first.
+- "Clear" becomes File → New canvas, which offers to save first; Discard canvas
+  clears without saving.
+- A new UI: status buttons for the iPad and plotter with Troubleshoot
+  checklists, a menu bar, and a plotter-controller panel.
+- The motors can be released and taken back without disconnecting.
+- "Plotter behind" replaces the old lag readout, and now falls as the plotter
+  catches up.
+- "plot svg" becomes Open file… → a preview → Import to live drawing, with
+  pause, resume and cancel. An imported drawing becomes part of the drawing.
+- Saving is one Save as… (SVG) through the system's Save window; PNG export is
+  gone.
+- The canvas shows the paper, with rulers, and the machine's reach on it.
+- Flip H/V and the Tools tab (flip, minimum width, heal dots) are gone; where
+  the plot lands is set in Preferences → Edit layout instead.
+- Menus (File / Preferences / Effects) replace the sidebar tabs; the sidebar is
+  the plotter controller.
 - Saves go to `Documents/Pantograph/`, not `saved_drawings/`.
 - The canvas, the UI and exports are white paper with greyscale strokes.
 - Paper size and AxiDraw model are settings.
-- `python svg_transform.py` opens the app's Tools tab.
+- `python svg_transform.py drawing.svg` opens that drawing in the app; its
+  tkinter window is gone, and its transforms are command-line only.
 - Settings live in a file, not the browser.
 - The UI is at `127.0.0.1:5810` instead of `localhost:5000`.
 - The plotter is detected automatically; `--dry-run` still forces
@@ -871,7 +1079,8 @@ On Windows 11 and one Mac:
       replay.
 - [ ] Second launch with no internet.
 - [ ] Re-running an installer updates the app and keeps settings and drawings.
-- [ ] The UI works in Chrome/Edge and Safari.
+- [ ] The UI works in Chrome/Edge and Safari. (Automated: Edge and WebKit
+      pass. Real Safari is left for the Mac session.)
 
 ---
 
@@ -966,7 +1175,7 @@ The known risks, each with its mitigation and phase. Re-check before release.
 | G-19 | `localhost` resolves to IPv6 first on some systems | Use `127.0.0.1` | 2 |
 | G-20 | Launched twice, two copies fight over ports | `instance.json` + `/health` | 2 |
 | G-21 | Browser shows a stale cached UI after an update | `Cache-Control: no-store` | 2 |
-| G-22 | Large drawings (several MB) make the list and tools slow | Thumbnails; worker thread | 6 |
+| G-22 | Large drawings (several MB) make the list and tools slow | Thumbnails (in memory, lazy-loaded); worker thread. A 9 MB heal takes ~5 s. **Done (Phase 6)** | 6 |
 | G-23 | Old SVGs must still load and replay | Format stays v1; tests | 0, 3 |
 | G-24 | macOS 15+ Local Network privacy might affect iPad input when launched from Terminal | **Unverified.** Check in the real-Mac session | 10 |
 | G-26 | Our download links disappear | uv pinned; pyaxidraw vendored; our own releases on GitHub | 0, 8, 9 |
@@ -977,6 +1186,19 @@ The known risks, each with its mitigation and phase. Re-check before release.
 | G-36 | Stroke splitting relies on iDraw sending the state block only *before* a stroke, never during one | Any block field counts, which tolerates lost packets. If iDraw changes this behaviour, strokes will split or merge wrongly; `--raw-osc` shows it | −1 |
 | G-37 | The click route's launchers sit in `PantographApp/`, one folder down, among many repo files | README table says "open `PantographApp`" explicitly; the installers create shortcuts, so the primary route never needs it | 10 |
 | G-38 | Release zip bloated by `saved_drawings/` (49 MB) | `export-ignore` in `.gitattributes` | 9 |
+| G-39 | A page's broadcasts sent while its `hello` is being built never reach it | `hello` takes the drawing snapshot last, and the IP list is cached; the window is now microseconds. Tests wait for `hello` before drawing, as the page does | 5 |
+| G-40 | An imported SVG could contain script, and `/drawings/` serves it from our origin | `Content-Security-Policy: sandbox` on `/drawings/` and `/thumb/`; the page shows them with `<img>` | 6 |
+| G-41 | Pausing a replay leaves a full queue, which the optimizer would read as falling behind and thin | The optimizer skips while paused | 6 |
+| G-42 | "Lag" was the oldest queued command's age: it climbed all through a drawing and only hit 0 at the end, even while the plotter was catching up (Marc, 2026-09-20) | It's now the gap between drawing a mark and the plotter drawing it, measured on a clock that only runs while marks are being drawn (`_pen_clock`, `current_lag`). It grows while the pen runs ahead, falls whenever drawing stops, and is 0 when caught up. The same number feeds the optimizer | 5 |
+| G-43 | The progress bar filled in the first seconds: it counted points *fed*, and feeding runs far ahead of the pen | Each queued command carries the index of the point it came from; the plotter reports it as it runs (`Queued.mark`), so the bar follows the pen | 6 |
+| G-44 | The system's file windows must open on the main thread (macOS), but messages arrive on the server's thread | `run_on_main` queues them; `main()`'s loop serves them every 0.1 s. A dialog blocks that loop while it's open, which is fine — everything else runs on other threads | 6 |
+| G-45 | An AxiDraw reaches past the sheet, so its rectangle (and the layout handles) fell off the canvas | The canvases cover the paper plus 1.5″ all round; the sheet is a separate white element inside | 5 |
+| G-46 | The page's arithmetic and `layout.py` must agree, or the preview lies about where the pen goes | One formula, written twice (Python and JS) with the same names, and `tests/test_layout.py` pins the Python side. If one changes, change both | 5 |
+| G-47 | Changing the paper resizes the canvases, which clears them | The page asks for the drawing again (`hello_again`) and replays it | 5 |
+| G-48 | A saved SVG held the tablet's coordinates, so a turned or moved layout plotted correctly but saved as though it were square on the page | Saved files are in paper space (`space: "paper"`), and importing converts back. The recording stays tablet-space while the drawing is live, since that's what the pipeline replays | 5 |
+| G-49 | A stroke drawn while an import *plotted* was shown and recorded but never plotted (Marc, 2026-09-20). Strokes are held back during an import so two writers don't splice into one stroke — but feeding takes seconds and plotting takes minutes, and the hold was keyed to the whole import, so anything drawn during the catching-up sat in `_live_pending` for good | The hold is keyed to `_import_feeding`, set only while points are being fed. Once the feed is in, the flush drains what was held and clears it, and later strokes queue themselves behind the import the ordinary way. `_wait_for_plotter` waits on the import's own marked commands, not on the queue, so those later strokes don't keep it "running" | 6 |
+| G-50 | Changing the paper reopened the preview for the last file opened (Marc, 2026-09-20) | Resizing the canvases asks for a fresh `hello` (G-47), and `hello` carries the open file. The page now shows that preview on the first `hello` only — a later one is a catch-up, not a request to open a window | 6 |
+| G-51 | An image sized with `max-height: 100%` inside a `1fr` grid track doesn't fit it: the track has a used height but its *computed* height is `auto`, so the percentage never resolves, and the drawing overflowed across the preview window's header | The window has a definite `height`, and the drawing is absolutely placed inside its box, where percentages resolve against a real height | 5 |
 
 (Resolved and removed: G-25 Windows on ARM, not handled by decision; G-27
 update notices, cut; G-28 OSC threading, done; G-32 lxml builds, covered by
@@ -994,7 +1216,7 @@ No questions are open. Recorded answers, all folded into §1:
 | 2026-09-18 | Record in Python? | Yes |
 | 2026-09-18 | Look | White paper, greyscale strokes, matching iDraw OSC, across the app |
 | 2026-09-18 | Paper size / AxiDraw model | Saved settings, like tilt |
-| 2026-09-18 | `python svg_transform.py` | Opens the app's Tools tab (most consistent look) |
+| 2026-09-18 | `python svg_transform.py` | Opens the app's Tools tab (most consistent look) — *superseded 2026-09-20: no Tools tab; it opens the drawing in the app* |
 | 2026-09-18 | Licence | MIT |
 | 2026-09-18 | Name | Pantograph |
 | 2026-09-18 | Windows on ARM | Not handled |
@@ -1005,6 +1227,22 @@ No questions are open. Recorded answers, all folded into §1:
 | 2026-09-19 | Install routes | Both routes on both platforms; command line primary; README shows them side by side |
 | 2026-09-19 | Pressure lag | Fix it, but deferred until a Pencil is available; patch saved |
 | 2026-09-19 | pyaxidraw | Vendored in the repo (decided under the scope rule: simpler than a hosted download); split into package + wheel to keep `uv.lock` portable |
+| 2026-09-19 | Live drawing during a replay | Ignored until the replay ends or is cancelled (Phase 6; the plan left it open) |
+| 2026-09-20 | Motors | A Disengage / Re-engage toggle, independent of the connection; home only moves when **Set as home** is pressed |
+| 2026-09-20 | An opened drawing | Previewed in its own panel, then imported into the live drawing — there's only one canvas |
+| 2026-09-20 | Saving | One Save as… (SVG, system Save window). No PNG export: the SVG is the format that replots and edits |
+| 2026-09-20 | The canvas | Shows the paper, with rulers in inches or mm |
+| 2026-09-20 | Heal automatically | Live: a stroke starting within 0.15″ and 0.3 s of the last one's end carries on instead of lifting |
+| 2026-09-20 | What the app is | A translator between physical and digital media, not an SVG editor (see the top of this file) |
+| 2026-09-20 | The Tools tab | Deleted: flip, minimum width and heal are retroactive edits. The command-line tools stay |
+| 2026-09-20 | Flip H/V | Gone: turning the AxiDraw's rectangle in the layout covers orientation, and no mirror is offered |
+| 2026-09-20 | The paper | No longer clamped to the machine's reach: it's the sheet, and the layout says what the machine covers |
+| 2026-09-20 | Out of reach | Not drawn at all (first tried: clamped to the edge). A pen can't draw past what it can touch |
+| 2026-09-20 | The pen path's colour | The machine's orange, since it's the machine's line |
+| 2026-09-20 | UI shape | Menu bar (File / Preferences / Effects) + a plotter-controller panel, the usual creative-tool layout |
+| 2026-09-20 | What a saved file holds | The sheet of paper: points where the pen went, at 96 per inch (`space: "paper"`) — the file is the analogue of the plot |
+| 2026-09-20 | OSC port | Applies itself 2 s after the number stops changing; no Apply button, keyboard entry only |
+| 2026-09-20 | Address list | Only the address to use (and Tailscale); other adapters fold away |
 
 ---
 

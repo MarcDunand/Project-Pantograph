@@ -59,14 +59,58 @@ def test_tap_dwells_once_and_closes_on_next_block(engine):
     assert k.count("dot_dwell") == 1 and k[-1] == "penup" and pen_ups(engine) == 1
 
 
-def test_replay_keeps_recorded_strokes_separate(engine):
+def test_imported_strokes_keep_their_boundaries(engine):
     rec = {"strokes": [
         {"canvasWidth": 440.0, "canvasHeight": 956.0, "points": [[0, 100, 100, 2.0], [0.01, 110, 100, 2.0]]},
         {"canvasWidth": 440.0, "canvasHeight": 956.0, "points": [[0.02, 100, 300, 2.0], [0.03, 110, 300, 2.0]]},
     ]}
-    engine._replay_recording(rec)
+    engine._feed_strokes(rec["strokes"])        # the feeding half; no plotter thread here
     k = kinds(engine)
     assert k.count("moveto") == 2 and k.count("penup") == 2 and pen_ups(engine) == 2
+
+
+def _wait_for(cond, timeout=10.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_a_stroke_drawn_while_an_import_feeds_is_plotted_after_it(engine):
+    """Held back while the import feeds, then queued behind it — never dropped."""
+    pts = [[i * 0.01, 100.0 + i, 100.0, 2.0] for i in range(40)]
+    engine.start_import({"strokes": [{"canvasWidth": 440.0, "canvasHeight": 956.0,
+                                      "points": pts}]})
+    send_block(engine)
+    for i in range(10):
+        send_point(engine, 200.0 + i, 400.0)
+    assert _wait_for(lambda: engine._import_state["phase"] == "finishing"), "never finished feeding"
+    ys = {round(q.cmd[3], 2) for q in engine._plot_deque if q.cmd[1] == "lineto"}
+    assert len(ys) > 1, "the live stroke was captured but never queued"
+
+
+def test_a_stroke_drawn_while_the_machine_catches_up_is_plotted(engine):
+    """
+    Feeding takes seconds and plotting takes minutes. A stroke drawn during that
+    catching-up has nothing to collide with, so it queues itself straight away —
+    the bug was that it stayed held back, shown on the page but never plotted.
+    """
+    pts = [[i * 0.01, 100.0 + i, 100.0, 2.0] for i in range(20)]
+    engine.start_import({"strokes": [{"canvasWidth": 440.0, "canvasHeight": 956.0,
+                                      "points": pts}]})
+    # No plotter thread runs here, so the queue never drains and the import sits
+    # in "finishing" — exactly the window the drawing is made in.
+    assert _wait_for(lambda: engine._import_state["phase"] == "finishing"), "never finished feeding"
+    assert not engine._import_feeding.is_set(), "capture should stop when the feed does"
+    before = len(engine._plot_deque)
+    send_block(engine)
+    for i in range(10):
+        send_point(engine, 200.0 + i, 400.0)
+    engine._end_stroke()
+    assert len(engine._plot_deque) > before, "the live stroke never reached the queue"
+    assert not engine._live_pending, "nothing should still be held back"
 
 
 def test_udp_fast_strokes_arrive_in_order(engine):
@@ -107,7 +151,8 @@ def test_udp_fast_strokes_arrive_in_order(engine):
 # ── no-pressure input ────────────────────────────────────────────────────────
 
 def _pressures(L, kind):
-    return [round(c[2] if kind == "pendown" else c[4], 3) for c in L._plot_deque if c[1] == kind]
+    return [round(q.cmd[2] if kind == "pendown" else q.cmd[4], 3)
+            for q in L._plot_deque if q.cmd[1] == kind]
 
 
 def _stroke(L, raws):
@@ -144,3 +189,27 @@ def test_glitch_inside_real_pressure_is_interpolated(engine):
 def test_long_placeholder_run_inside_real_pressure_plots_at_half(engine):
     _stroke(engine, [2.0, 2.0] + [1.0] * 6 + [2.0, 2.0])
     assert _pressures(engine, "lineto").count(0.5) >= 5
+
+
+def test_lag_is_drawing_time_the_plotter_still_owes(engine):
+    """
+    "Behind by" is the gap between drawing a mark and the plotter drawing it,
+    with the time nobody was drawing taken out: it grows while the pen runs
+    ahead, falls as the plotter catches up, and is 0 once it's caught up.
+    """
+    # Three seconds of drawing, one point per 0.1 s (so no gap counts as a pause).
+    for i in range(30):
+        engine._pen_clock_tick(i * 0.1)
+        engine._plot_deque.append(engine.Queued((i * 0.1, "lineto", i, i, 1.0)))
+    assert engine.current_lag() == 2.9              # the queue head is the first mark
+
+    for _ in range(15):                             # the plotter draws half of them
+        engine._plot_deque.popleft()
+    assert engine.current_lag() == 1.4
+
+    # Nobody draws for a while: the pen clock stops, so the lag doesn't grow.
+    engine._pen_clock_tick(30.0)
+    assert engine.current_lag() == 1.4
+
+    engine._plot_deque.clear()
+    assert engine.current_lag() == 0.0

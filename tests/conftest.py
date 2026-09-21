@@ -27,12 +27,23 @@ def engine(monkeypatch):
     L._end_stroke()
     L._plot_deque.clear()
     L._pending_024.clear()
+    L._heal_live = False
+    L._import_state.update(active=False, paused=False, plotted=0, total=0, name=None, phase="")
+    L._import_feeding.clear()
+    L._live_pending.clear()
+    L._live_cur = None
+    L._pen_clock = 0.0
+    L._pen_clock_wall = None
+    L._pen_clock_marks.clear()
     L._spurious_run = 0
     L._current_lag_sec = 0.0
     L._effects_only = False
     L.state.update(x=None, y=None, pressure=1.0, tool="pen", canvasWidth=440.0,
                    canvasHeight=956.0, _last_point_time=None, _pen_is_down=False)
-    L.state["_mapping"] = L.compute_mapping(440.0, 956.0)
+    L.PAPER_WIDTH_IN, L.PAPER_HEIGHT_IN = 8.5, 11.0
+    L._axidraw_model = 1
+    L._layout = {}
+    L._update_layout(refit=True)
     for name in L._EFFECT_SWITCHES:
         monkeypatch.setitem(L._EFFECT_SWITCHES, name, False)
     L._rebuild_effect_chain()
@@ -67,7 +78,7 @@ def send_point(L, x, y, raw_pressure=2.0):
 
 
 def kinds(L):
-    return [c[1] for c in L._plot_deque]
+    return [q.cmd[1] for q in L._plot_deque]
 
 
 def pen_ups(L):

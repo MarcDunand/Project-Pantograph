@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Pantograph</title>
+  <link rel="stylesheet" href="/ui/app.css">
+  <link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <!-- a pantograph: the linkage that copies a drawing at a new scale -->
+    <svg viewBox="0 0 26 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M2 18 L9 4 L16 11 M9 4 L24 18 M5.5 11 L12.5 11 L16 11 L20 14.5"/>
+      <circle cx="2" cy="18" r="1.4" fill="currentColor"/><circle cx="24" cy="18" r="1.4" fill="currentColor"/>
+    </svg>
+    Pantograph
+  </div>
+
+  <button class="status-btn" id="ipad-btn" aria-expanded="false" aria-controls="ipad-panel">
+    <span class="dot" id="ipad-dot"></span><span class="who">iPad</span><span class="what" id="ipad-label">Waiting</span>
+  </button>
+  <button class="status-btn" id="plotter-btn" aria-expanded="false" aria-controls="plotter-panel">
+    <span class="dot" id="plotter-dot"></span><span class="who">Plotter</span><span class="what" id="plotter-label">…</span>
+  </button>
+
+  <div class="address" title="Type these into iDraw OSC on the iPad">
+    iDraw&nbsp;→ <code id="addr-ip">…</code> <span>port</span> <code id="addr-port">8800</code>
+    <button class="btn small quiet" id="copy-ip">Copy IP</button>
+  </div>
+
+  <div class="spacer"></div>
+  <div class="meta">
+    <span title="Drawing time the plotter still has to catch up on">plotter behind <span class="num" id="lag-display">0.0</span>&nbsp;s</span>
+    <span id="conn-label">connecting…</span>
+  </div>
+  <button class="btn" id="quit-btn">Quit</button>
+
+  <!-- iPad panel -->
+  <section class="popover" id="ipad-panel" hidden aria-label="iPad connection">
+    <h2><span class="dot" id="ipad-dot2"></span><span id="ipad-title">iPad</span></h2>
+    <p class="detail" id="ipad-detail"></p>
+    <dl class="kv" id="ipad-addresses"></dl>
+    <details id="ipad-more" hidden><summary>Other addresses on this computer</summary>
+      <dl class="kv" id="ipad-addresses-more"></dl>
+    </details>
+    <div class="btn-row">
+      <button class="btn" id="osc-restart">Restart listener</button>
+      <button class="btn" id="ipad-ts-btn">Troubleshoot</button>
+    </div>
+    <div class="inline-form">
+      <label for="osc-port-input">Listen on port</label>
+      <input type="text" inputmode="numeric" autocomplete="off" id="osc-port-input" maxlength="5">
+      <span class="detail" id="osc-port-note"></span>
+    </div>
+    <p class="detail">Set the same port in iDraw OSC.</p>
+    <div class="troubleshoot" id="ipad-ts" hidden>
+      <h3>If nothing arrives</h3>
+      <ol class="checklist">
+        <li>In iDraw OSC on the iPad, set the IP to <b class="num ts-ip">…</b> and the port to <b class="num ts-port">8800</b>.</li>
+        <li>The iPad and this computer are on the <b>same Wi-Fi network</b>.</li>
+        <li class="os-win">Windows: the Wi-Fi network is set to <b>Private</b>, not Public. Settings → Network &amp; internet → Wi-Fi → your network → Network profile type → Private.</li>
+        <li><span class="os-win">When Windows asked about the firewall, you chose <b>Allow</b>. If you cancelled it: open “Allow an app through Windows Firewall”, press Change settings, and tick <b>Private</b> for python.exe.</span><span class="os-mac">The Mac firewall is off by default. If you turned it on: System Settings → Network → Firewall → Options, and allow Python.</span></li>
+        <li>Nothing else is using port <b class="num ts-port">8800</b>. If the status says the port is busy, pick another port above and set the same one in iDraw.</li>
+        <li>Some <b>school, work, hotel and guest networks</b> stop devices from reaching each other. A phone hotspot is a quick test. The fix is a different network, or Tailscale (see the README).</li>
+        <li>Press <b>Restart listener</b>, then draw a stroke. The dot turns green when it arrives.</li>
+      </ol>
+      <div class="btn-row"><button class="btn small copy-diag">Copy diagnostics</button></div>
+    </div>
+  </section>
+
+  <!-- Plotter panel -->
+  <section class="popover" id="plotter-panel" hidden aria-label="Plotter connection">
+    <h2><span class="dot" id="plotter-dot2"></span><span id="plotter-title">Plotter</span></h2>
+    <p class="detail" id="plotter-detail"></p>
+    <div class="btn-row">
+      <button class="btn primary" id="plotter-connect">Connect</button>
+      <button class="btn" id="plotter-ts-btn">Troubleshoot</button>
+    </div>
+    <p class="detail">Walk Home, Set Home and Disengage XY Motors are in the plotter controller.</p>
+    <div class="troubleshoot" id="plotter-ts" hidden>
+      <h3>If the plotter isn't found</h3>
+      <ol class="checklist">
+        <li>The USB cable is plugged in, <b>and</b> the AxiDraw's own power supply is on. USB alone doesn't power the motors.</li>
+        <li>Try another USB port or cable. Some cables only charge.</li>
+        <li>Close other programs using the AxiDraw: Inkscape's AxiDraw extension, or a second Pantograph.</li>
+        <li>pyaxidraw is installed. If it isn't, the status says “No pyaxidraw”.</li>
+        <li>Press <b>Connect</b>, and read the message above if it fails.</li>
+        <li>Try the pen tests in the plotter controller.</li>
+      </ol>
+      <div class="btn-row"><button class="btn small copy-diag">Copy diagnostics</button></div>
+    </div>
+  </section>
+</header>
+
+<nav class="menubar" aria-label="Menus">
+  <div class="menu">
+    <button class="menu-btn" id="menu-file-btn" aria-expanded="false" aria-haspopup="true">File</button>
+    <div class="menu-list" id="menu-file" hidden role="menu">
+      <button role="menuitem" id="mi-new">New canvas</button>
+      <button role="menuitem" id="mi-import">Import to canvas…</button>
+      <button role="menuitem" id="mi-save">Save as…</button>
+      <hr>
+      <button role="menuitem" id="mi-discard" class="danger">Discard canvas</button>
+    </div>
+  </div>
+  <div class="menu">
+    <button class="menu-btn" id="menu-prefs-btn" aria-expanded="false" aria-haspopup="true">Preferences</button>
+    <div class="menu-list" id="menu-prefs" hidden role="menu">
+      <button role="menuitem" id="mi-prefs">Plotter preferences…</button>
+      <button role="menuitem" id="mi-layout">Edit layout…</button>
+      <hr>
+      <label class="menu-check"><input type="checkbox" id="inp-heal-live"><span>Heal dots</span><button class="info" data-info="A fast pen can tear one line into a line, a trail of dots, and another line. With this on, a stroke that starts within a few millimetres of where the last one ended, a moment later, carries on instead of lifting the pen." aria-label="About Heal dots"></button></label>
+    </div>
+  </div>
+  <div class="menu">
+    <button class="menu-btn" id="menu-fx-btn" aria-expanded="false" aria-haspopup="true">Effects</button>
+    <div class="menu-list" id="menu-fx" hidden role="menu">
+      <button role="menuitem" id="mi-effects">Effects…</button>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <span class="menubar-note" id="menubar-note"></span>
+</nav>
+
+<main class="workspace">
+  <section class="stage" aria-label="Canvas">
+    <div class="stage-bar">
+      <div class="counters">
+        <span>strokes <span class="num" id="stroke-count">0</span></span>
+        <span>points <span class="num" id="pt-count">0</span></span>
+        <span>pressure <span class="num" id="pressure-val">—</span></span>
+        <span>tool <span id="tool-label">—</span></span>
+      </div>
+      <div class="layer-toggles" role="group" aria-label="Layers shown and saved">
+        <span class="chip">
+          <label><input type="checkbox" id="view-raw" checked><span class="swatch raw"></span>Drawing</label>
+          <button class="info" data-info="The drawing itself: what the iPad sent, in its own colours as greys." aria-label="About the Drawing layer"></button>
+        </span>
+        <span class="chip">
+          <label><input type="checkbox" id="view-opt"><span class="swatch opt"></span>Pen path</label>
+          <button class="info" data-info="The line the pen actually follows, after simplifying. It appears as the plotter draws it, on top of the drawing." aria-label="About the Pen path layer"></button>
+        </span>
+        <span class="chip">
+          <label><input type="checkbox" id="view-fx" checked><span class="swatch fx"></span>Effects</label>
+          <button class="info" data-info="The extra marks the effects add (Effects menu)." aria-label="About the Effects layer"></button>
+        </span>
+        <div class="info-bubble" id="info-bubble" role="status" hidden></div>
+      </div>
+    </div>
+
+    <div class="table" id="table">
+      <div class="sheet" id="sheet">
+          <canvas class="ruler" id="ruler-y" width="36" height="100"></canvas>
+          <div id="canvas-wrap">
+            <div id="paper-sheet"></div>
+            <canvas id="c" width="816" height="1056"></canvas>
+            <canvas id="overlay" width="816" height="1056"></canvas>
+            <canvas id="c-opt" width="816" height="1056"></canvas>
+            <canvas id="c-fx" width="816" height="1056"></canvas>
+            <canvas id="c-layout" width="816" height="1056"></canvas>
+          </div>
+          <button class="btn small quiet unit-toggle" id="unit-toggle" title="Switch between inches and millimetres">in</button>
+          <canvas class="ruler" id="ruler-x" width="100" height="26"></canvas>
+          <div class="paper-caption" id="paper-caption"></div>
+      </div>
+
+      <div class="first-run" id="first-run" hidden>
+        <div class="card">
+          <h2>Connect iDraw on the iPad</h2>
+          <ol>
+            <li>Open <b>iDraw OSC</b> on the iPad.</li>
+            <li>Set the IP to <span class="big-address" id="fr-ip">…</span></li>
+            <li>Set the port to <span class="big-address" id="fr-port">8800</span></li>
+            <li>Draw a line — it appears here.</li>
+          </ol>
+          <p class="detail">Nothing arriving? <button class="link-btn" id="fr-troubleshoot">Troubleshoot the connection</button></p>
+        </div>
+      </div>
+
+      <div class="first-run" id="no-plotter" hidden>
+        <div class="card">
+          <h2>No plotter connected <button class="info" data-info="Without a plotter you can draw, import drawings and save — everything except moving a pen. A saved canvas plots later, from any computer with an AxiDraw." aria-label="What works without a plotter"></button></h2>
+          <ol>
+            <li>Plug the AxiDraw in over USB, <b>and</b> switch on its own power supply.</li>
+            <li>Press Connect.</li>
+          </ol>
+          <p class="detail" id="no-plotter-detail"></p>
+          <div class="btn-row">
+            <button class="btn primary" id="no-plotter-connect">Connect</button>
+            <button class="btn" id="no-plotter-skip">Use without a plotter</button>
+            <button class="link-btn" id="no-plotter-ts">Troubleshoot</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- the layout editor's own bar, over the paper -->
+      <div class="layout-bar" id="layout-bar" hidden>
+        <span><b>Edit layout</b> — drag to move, the ring to turn<span id="layout-scale-hint">, the corner to resize</span>.</span>
+        <span class="layout-legend"><span class="key ipad"></span>drawing <span class="key axi"></span>AxiDraw</span>
+        <span class="note" id="layout-warning" hidden>Part of the drawing is outside what the AxiDraw reaches.</span>
+        <span class="spacer"></span>
+        <button class="btn small" id="layout-fit">Fit to paper</button>
+        <button class="btn small" id="layout-cancel">Cancel</button>
+        <button class="btn small primary" id="layout-done">Done</button>
+      </div>
+    </div>
+
+    <div class="stage-actions">
+      <span id="save-status" role="status"></span>
+    </div>
+  </section>
+
+  <aside class="sidebar">
+    <div class="replay-card" id="import-card" hidden>
+      <div class="row"><span class="title" id="import-title">Plotting</span><span class="num sub" id="import-count"></span></div>
+      <div class="progress"><div id="import-bar"></div></div>
+      <div class="row">
+        <span class="btn-row">
+          <button class="btn small" id="import-pause">Pause</button>
+          <button class="btn small danger" id="import-cancel">Cancel</button>
+        </span>
+      </div>
+    </div>
+
+    <h2 class="panel-title">Plotter controller</h2>
+
+    <div class="tab-panel" id="panel-controller">
+      <section class="group">
+        <div class="btn-row machine-row">
+          <button class="btn needs-motors" id="btn-home">Walk Home</button>
+          <button class="btn needs-motors" id="plotter-set-home">Set Home</button>
+          <button class="btn needs-plotter" id="plotter-motors">Disengage XY Motors</button>
+        </div>
+      </section>
+
+      <section class="group">
+        <h3>Machine and paper</h3>
+        <div class="field"><label for="inp-model">AxiDraw</label><select id="inp-model"></select></div>
+        <div class="field"><label for="inp-paper">Paper</label><select id="inp-paper"></select></div>
+        <div class="pair" id="paper-custom" hidden>
+          <input type="number" id="inp-paper-w" min="1" max="40" step="0.01" aria-label="Paper width in inches"> ×
+          <input type="number" id="inp-paper-h" min="1" max="40" step="0.01" aria-label="Paper height in inches"> in
+        </div>
+        <p class="note" id="paper-note" hidden></p>
+      </section>
+
+      <section class="group">
+        <h3>Pen</h3>
+        <p class="hint">Servo positions, 0–100. Lower goes further down.</p>
+        <div class="field slider"><label for="inp-pen-up">Pen up</label><output id="inp-pen-up-val"></output>
+          <button class="btn small needs-plotter" data-test="pen_test_up">Test</button>
+          <input type="range" id="inp-pen-up" min="0" max="100" step="1"></div>
+        <div class="field slider"><label for="inp-pen-down-min">Pen down (light)</label><output id="inp-pen-down-min-val"></output>
+          <button class="btn small needs-plotter" data-test="pen_test_min">Test</button>
+          <input type="range" id="inp-pen-down-min" min="0" max="100" step="1"></div>
+        <label class="check"><input type="checkbox" id="inp-var-pressure"> Vary with pencil pressure</label>
+        <div id="pressure-group" class="group">
+          <div class="field slider"><label for="inp-pen-down-max">Pen down (full pressure)</label><output id="inp-pen-down-max-val"></output>
+            <button class="btn small needs-plotter" data-test="pen_test_max">Test</button>
+            <input type="range" id="inp-pen-down-max" min="0" max="100" step="1"></div>
+        </div>
+      </section>
+    </div>
+  </aside>
+</main>
+
+<!-- Plotter preferences -->
+<div class="window" id="prefs-window" hidden role="dialog" aria-modal="true" aria-labelledby="prefs-title">
+  <div class="window-card">
+    <header><h2 id="prefs-title">Plotter preferences</h2><button class="btn small close-window">Close</button></header>
+    <div class="window-body">
+      <section class="group">
+        <h3>Speed</h3>
+        <p class="hint">The machine's own units: speeds 1–110, acceleration 1–100.</p>
+        <div class="field"><label for="inp-speed-pendown">Speed, pen down</label><input type="number" id="inp-speed-pendown" min="1" max="110" step="1"></div>
+        <div class="field"><label for="inp-speed-penup">Speed, pen up</label><input type="number" id="inp-speed-penup" min="1" max="110" step="1"></div>
+        <div class="field"><label for="inp-accel">Acceleration</label><input type="number" id="inp-accel" min="1" max="100" step="1"></div>
+      </section>
+
+      <section class="group">
+        <h3>Pressure</h3>
+        <div class="field"><label for="inp-pressure-rate">Pressure updates (% of points)</label><input type="number" id="inp-pressure-rate" min="0" max="100" step="1"></div>
+        <p class="hint">How often the pen's height is adjusted mid-stroke. Only used with variable pressure.</p>
+      </section>
+
+      <section class="group">
+        <h3>Table tilt</h3>
+        <p class="hint">If the surface isn't level, these nudge the pen's height as it travels.</p>
+        <div class="field"><label for="inp-x-tilt">Left–right</label><span class="pair"><input type="number" id="inp-x-tilt" min="-10" max="10" step="0.1"><span class="unit">°</span></span></div>
+        <div class="field"><label for="inp-y-tilt">Top–bottom</label><span class="pair"><input type="number" id="inp-y-tilt" min="-10" max="10" step="0.1"><span class="unit">°</span></span></div>
+      </section>
+
+      <section class="group">
+        <h3>Keeping up</h3>
+        <label class="check"><input type="checkbox" id="inp-opt-en"> Simplify lines when the plotter falls behind</label>
+        <div id="opt-group" class="group">
+          <div class="field slider"><label for="inp-opt-scale">How much</label><output id="inp-opt-scale-val"></output>
+            <input type="range" id="inp-opt-scale" min="0" max="1" step="0.01"></div>
+          <div class="field slider"><label for="inp-min-dist">Smallest step</label><output id="inp-min-dist-val"></output>
+            <input type="range" id="inp-min-dist" min="0.001" max="0.05" step="0.001"></div>
+          <label class="check"><input type="checkbox" id="inp-maxlag-en"> Cap how far behind it gets</label>
+          <div class="field"><label for="inp-maxlag-sec">Cap</label><span class="pair"><input type="number" id="inp-maxlag-sec" min="0.5" max="30" step="0.5"><span class="unit">s</span></span></div>
+        </div>
+      </section>
+
+      <div class="btn-row"><button class="btn" id="reset-settings">Reset settings to defaults</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- Effects -->
+<div class="window" id="effects-window" hidden role="dialog" aria-modal="true" aria-labelledby="effects-title">
+  <div class="window-card">
+    <header><h2 id="effects-title">Effects</h2><button class="btn small close-window">Close</button></header>
+    <div class="window-body">
+      <section class="group">
+        <p class="hint">Change what the plotter draws, live. Shown in blue.</p>
+        <label class="check" title="Plot only the marks the effects add. Import a finished drawing to lay effects over it.">
+          <input type="checkbox" id="fx-effects-only"> Effects only (skip the drawing itself)
+        </label>
+      </section>
+      <div class="group" id="fx-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- an opened drawing, before it joins the canvas -->
+<div class="preview-panel" id="opened-panel" hidden role="dialog" aria-modal="true" aria-labelledby="opened-name">
+  <div class="preview-card">
+    <header>
+      <div>
+        <h2 id="opened-name">drawing.svg</h2>
+        <p class="detail" id="opened-meta"></p>
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" id="opened-import">Import to canvas</button>
+        <button class="btn" id="opened-back">Back</button>
+      </div>
+    </header>
+    <div class="preview-body"><img id="opened-img" alt=""></div>
+    <p class="detail preview-note">Importing plots it onto the canvas, as if you had drawn it yourself.</p>
+  </div>
+</div>
+
+<div class="modal" id="dialog" hidden role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+  <div class="card">
+    <h2 id="dialog-title"></h2>
+    <p id="dialog-body"></p>
+    <div class="btn-row">
+      <button class="btn" id="dialog-cancel">Cancel</button>
+      <button class="btn" id="dialog-other" hidden></button>
+      <button class="btn primary" id="dialog-ok">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<div class="stopped" id="stopped" hidden>
+  <div><h1>Pantograph has stopped</h1><p>The pen is up and the motors are off. You can close this tab.</p></div>
+</div>
+
+<script type="module" src="/ui/app.js"></script>
+</body>
+</html>

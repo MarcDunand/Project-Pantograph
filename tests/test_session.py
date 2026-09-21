@@ -7,10 +7,10 @@ import recording
 from PantographApp.settings import Settings, engine_messages
 
 
-def point(x, y, raw=2.0, t=0.0, replay=False, **meta):
+def point(x, y, raw=2.0, t=0.0, **meta):
     m = {"type": "point", "t": t, "x": x, "y": y, "pressure": raw / recording.OSC_PRESSURE_MAX,
          "pressureRaw": raw, "r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0, "tool": "pen",
-         "drawingWidth": 2.0, "canvasWidth": 440.0, "canvasHeight": 956.0, "replay": replay}
+         "drawingWidth": 2.0, "canvasWidth": 440.0, "canvasHeight": 956.0}
     m.update(meta)
     return m
 
@@ -34,16 +34,16 @@ def test_recorder_follows_the_page_rules():
     assert not r.is_empty() and r.dirty
 
 
-def test_replayed_strokes_are_drawn_but_not_recorded():
+def test_an_imported_drawing_becomes_part_of_the_drawing():
+    """There's one canvas: imported strokes are recorded like any others."""
     r = recording.Recorder()
-    r.on_message(point(1, 1, replay=True))
-    r.on_message(point(2, 2, replay=True))
+    r.on_message(point(1, 1))
+    r.on_message(point(2, 2))
     r.on_message(PEN_UP)
-    assert r.is_empty() and r.recording()["strokes"] == [] and r.messages() == []
     r.on_message(point(3, 3))
     r.on_message(PEN_UP)
-    assert len(r.recording()["strokes"]) == 1
-    assert [m["type"] for m in r.messages()] == ["point", "pen_up"]
+    assert [len(s["points"]) for s in r.recording()["strokes"]] == [2, 1]
+    assert [m["type"] for m in r.messages()] == ["point", "point", "pen_up", "point", "pen_up"]
 
 
 def test_recorder_captures_layers_and_clears():
@@ -88,14 +88,6 @@ def test_layers_only_export_has_no_recording():
         recording.parse_svg(r.svg(include_raw=False))
 
 
-def test_thumbnail_is_light_and_has_no_metadata():
-    rec = {"format": "draw2axi-recording", "version": 1, "strokes": [
-        {"drawingWidth": 2, "color": {"r": 0, "g": 0, "b": 0, "a": 1},
-         "points": [[i, i, i, 2.0] for i in range(20000)]}]}
-    svg = recording.thumbnail_svg(rec, 440, 956)
-    assert "<metadata>" not in svg and svg.count(",") < 9000
-
-
 # ── settings ─────────────────────────────────────────────────────────────────
 
 def test_settings_round_trip_and_ignore_junk(tmp_path):
@@ -108,16 +100,17 @@ def test_settings_round_trip_and_ignore_junk(tmp_path):
 
 
 def test_engine_messages_cover_the_saved_settings():
-    msgs = engine_messages({"axi_flipX": "1", "axi_penPosUp": "55", "axi_previewW": "400",
+    msgs = engine_messages({"axi_penPosUp": "55", "axi_view_raw": "0",
                             "axi_fx_en_pressure_hatch": "1", "axi_fx_p_pressure_hatch_SPACING_MM": "2.5",
-                            "axi_model": "2", "axi_paperW": "11.69", "axi_paperH": "16.54"})
-    assert {"type": "set_flip_x", "enabled": True} in msgs
+                            "axi_model": "2", "axi_paperW": "11.69", "axi_paperH": "16.54",
+                            "axi_layout": '{"ipad": {"rot": 30}}'})
     assert {"type": "set_pen_up_pos", "value": 55.0} in msgs
     assert {"type": "set_effect_enabled", "name": "pressure_hatch", "enabled": True} in msgs
     assert {"type": "set_effect_param_key", "key": "pressure_hatch_SPACING_MM", "value": 2.5} in msgs
     kinds = [m["type"] for m in msgs]
-    assert kinds.index("set_model") < kinds.index("set_paper")      # the model's reach first
-    assert not any("preview" in json.dumps(m) for m in msgs)          # page-only keys stay out
+    # The machine and the sheet before the layout that places things on them.
+    assert kinds.index("set_model") < kinds.index("set_paper") < kinds.index("set_layout")
+    assert not any("view_raw" in json.dumps(m) for m in msgs)          # page-only keys stay out
 
 
 def test_saved_effect_param_reaches_the_engine(engine):
@@ -135,18 +128,19 @@ def paper(engine):
     engine.set_paper(8.5, 11)
 
 
-def test_paper_is_clamped_to_the_models_reach(paper):
-    info = paper.set_paper(16.54, 11.69)                  # A3, given landscape
-    assert info["clamped"] and (paper.PAPER_WIDTH_IN, paper.PAPER_HEIGHT_IN) == (8.58, 11.81)
-    info = paper.set_model(2)                              # SE/A3 reaches it
-    assert not info["clamped"] and (paper.PAPER_WIDTH_IN, paper.PAPER_HEIGHT_IN) == (11.69, 16.54)
-    assert paper._effect_ctx.x_max == 16.54 and paper._effect_ctx.y_max == 11.69
-    m = paper.state["_mapping"]
-    assert m["draw_h"] <= 16.54 and m["draw_w"] <= 11.69
+def test_paper_is_the_sheet_and_the_machine_is_a_rectangle_on_it(paper):
+    """The paper is no longer clamped to the machine: the layout says what it reaches."""
+    paper.set_paper(16.54, 11.69)                         # A3, given landscape
+    assert (paper.PAPER_WIDTH_IN, paper.PAPER_HEIGHT_IN) == (11.69, 16.54)
+    assert paper.layout_msg()["out_of_reach"]              # a V3 can't cover A3
+    assert paper._effect_ctx.x_max == 11.81                # effects clamp to the machine
+    paper.set_model(2)                                     # the SE/A3 can
+    assert not paper.layout_msg()["out_of_reach"]
+    assert paper._effect_ctx.x_max == 16.93
 
 
 def test_paper_change_refused_mid_plot(paper):
-    paper._plot_deque.append((0.0, "penup"))
+    paper._plot_deque.append(paper.Queued((0.0, "penup")))
     assert paper.set_paper(8.27, 11.69)["type"] == "error"
     assert (paper.PAPER_WIDTH_IN, paper.PAPER_HEIGHT_IN) == (8.5, 11)
     assert paper.set_model(2)["type"] == "error"
@@ -154,3 +148,21 @@ def test_paper_change_refused_mid_plot(paper):
 
 def test_unknown_model_is_an_error(paper):
     assert paper.set_model(99)["type"] == "error"
+
+
+# ── the Open and Save windows run on the main thread ─────────────────────────
+
+def test_work_queued_for_the_main_thread_runs_there(engine):
+    """
+    The system's file windows must be opened from the main thread (macOS
+    requires it), so the WebSocket handler queues them for main()'s loop.
+    """
+    future = engine.run_on_main(lambda: "picked.svg")
+    assert not future.done()                       # nothing runs until the main loop serves it
+    engine.serve_main_thread_calls()
+    assert future.result(timeout=1) == "picked.svg"
+
+    boom = engine.run_on_main(lambda: 1 / 0)
+    engine.serve_main_thread_calls()
+    with pytest.raises(ZeroDivisionError):
+        boom.result(timeout=1)

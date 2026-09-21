@@ -180,16 +180,14 @@ The same program works with or without an AxiDraw: it looks for one on USB,
 and without one it's a live preview that records your drawing.
 
 Either way, a browser tab opens automatically at http://127.0.0.1:5810 —
-that's your live preview.
+that's Pantograph. Until the iPad sends anything, it shows the iDraw setup
+steps with this computer's IP and port.
 
 ### 8. Connect iDraw OSC to it
 
 On the iPad, open iDraw OSC and set:
-- **IP** → your computer's Wi-Fi IP address
-  - Windows: in the terminal, run `ipconfig` → under "Wireless LAN adapter
-    Wi-Fi", read **IPv4 Address**
-  - Mac: System Settings → Wi-Fi → your network → Details (or Terminal →
-    run `ipconfig getifaddr en0`)
+- **IP** → your computer's Wi-Fi IP address. Pantograph shows it in its top
+  bar (**iDraw → 192.168.…**) with a Copy button.
 - **Port** → `8800`
 
 This step, and its troubleshooting below, are identical whether or not you
@@ -197,13 +195,19 @@ have an AxiDraw.
 
 #### Troubleshooting the connection
 
+The **iPad** button in Pantograph's top bar shows whether anything is
+arriving (*Waiting*, *Receiving*, *Idle*, or *Problem*), and its
+**Troubleshoot** list walks through the checks below with your real IP and
+port filled in. **Copy diagnostics** there copies a summary to paste into a
+message if you need help.
+
 - Confirm both devices are on the **same Wi-Fi network** — not one on Wi-Fi
   and the other on cellular data or a different network.
 - Double check the IP — it can change whenever a device reconnects to Wi-Fi,
   so re-check it if it's been a while since you last looked.
-- The green dot in the preview only means the **browser** is talking to the
-  Python program on your own computer. It lights up even if nothing from the
-  iPad has ever arrived — it is not proof the iPad↔computer link works.
+- The iPad button turns green only when something has actually arrived from
+  the iPad. ("live", top right, only means the browser is talking to the
+  program on your own computer.)
 - In the terminal, run the same program from step 7 with `--raw-osc` added
   (e.g. `python listen_to_idraw.py --raw-osc`) and draw a stroke:
   - **Nothing prints** → no data is reaching the computer — a network
@@ -232,28 +236,49 @@ starts moving as you draw.
 **No AxiDraw:** strokes appear in the browser preview only — nothing plots
 yet. See step 10 for what to do with the drawing.
 
-### 10. Using the preview
+### 10. Using Pantograph
 
-**With an AxiDraw:**
-- **settings** (☰, top left) — flip/tilt the output, pen up/down positions,
-  variable pressure, path optimization, home the AxiDraw. Full reference:
-  [Browser controls](#browser-controls-1270015810) below.
-- **effects** (✦, top right) — turn on postprocessing effects like zigzag or
-  hatching. Full reference: [Post-processing effects](#post-processing-effects)
-  below.
-- **download** — save the current drawing as PNG or SVG, written to your
-  drawings folder, `Documents/Pantograph/`. The drawing is also autosaved
-  there while you draw, and saved automatically when you quit or press
-  **new drawing**, so reloading or closing the browser tab loses nothing.
-- **Ctrl+C** in the terminal lifts the pen and disengages the XY motors so
-  the carriage can be pushed home by hand.
+- **Top bar:** the **iPad** and **Plotter** buttons show each connection's
+  state; click one to connect, restart the listener, or open a
+  **Troubleshoot** checklist.
+- **Menu bar:** **File** (New canvas, Import to canvas…, Save as…, Discard
+  canvas), **Preferences** (Plotter preferences…, Edit layout…, Heal dots
+  automatically) and **Effects**. **Quit** lifts the pen,
+  turns the motors off and saves the drawing.
+- **The paper** in the middle is the canvas, at the paper size set in the
+  plotter controller, with rulers in inches or millimetres (click the unit to
+  switch). Two faint rectangles show where things sit on it: the drawing
+  (turquoise) and the AxiDraw's reach (orange, with a house at its home
+  corner). The chips above choose which layers show: the drawing itself, the
+  pen's path (the machine's orange, drawn as the pen draws it), and what the
+  effects add (blue).
+- **Preferences → Edit layout…** is where those rectangles move. Drag either
+  one, use its ring to turn it, and the drawing's corner to resize it. Set the
+  AxiDraw's rectangle to where the machine really sits on the sheet, and the
+  plot lands where the screen shows it. The layout is remembered.
+- **File → New canvas** starts a fresh one, offering to save first. **Save
+  as…** writes an SVG wherever you choose. **Discard canvas** empties it
+  without saving. The canvas is also autosaved while you draw and saved when
+  you quit, so reloading or closing the browser tab loses nothing.
+- **Plotter controller** (right): Walk Home, Set Home and Disengage XY
+  Motors; the AxiDraw model and paper size; and the three pen positions, each
+  with a Test button.
+- **Plotter preferences…**: speed and acceleration, pressure updates, table
+  tilt, and how hard to simplify lines when the plotter falls behind.
+- **Effects**: postprocessing effects like zigzag or hatching. See
+  [Post-processing effects](#post-processing-effects).
+- **File → Import to canvas…** shows a saved drawing in a preview. **Import to
+  canvas** plots it and adds it to the canvas, as if you had drawn it yourself
+  — you can keep drawing on the iPad meanwhile, and your strokes plot after it.
+  While it plots, a progress bar with **Pause** and **Cancel** appears in the
+  sidebar.
+- **Ctrl+C** in the terminal (or closing its window) also lifts the pen and
+  releases the motors, so the carriage can be pushed home by hand.
 
-**No AxiDraw:**
-- Everything above works except moving a plotter: the drawing is recorded and
-  saved to `Documents/Pantograph/` just the same.
-- **download → svg** saves a plottable SVG. Take it to a computer with an
-  AxiDraw and load it there with **plot svg** to plot it later, with
-  whatever paper size, effects and settings you choose at that time.
+**No AxiDraw?** Everything works except the moving plotter: the drawing is
+recorded and saved just the same. Copy the SVG to a computer with an AxiDraw
+and import it there (File → Import to canvas…), with whatever paper, effects
+and settings you choose at that time.
 
 ### Other programs, and going deeper
 
@@ -265,8 +290,8 @@ reference:
   actually work
 - **[Post-processing effects](#post-processing-effects)** — the effects
   panel in depth, and how to write your own
-- **[Offline tools](#offline-tools)** — `svg_transform.py`, `dot_healer.py`,
-  and other one-off scripts you run by hand on a finished SVG
+- **[Offline tools](#offline-tools)** — the Tools tab's transforms, and
+  `dot_healer.py` from the command line
 
 ---
 
@@ -280,13 +305,14 @@ need.)*
 | File | What it is |
 |------|------------|
 | `listen_to_idraw.py` | Main entry point. OSC receiver, coordinate mapping, plot queue, plotter thread, adaptive optimizer, SVG replay. |
-| `preview.py` | Live browser preview + control panel. HTTP on 5000, WebSocket on 5001. Also the SVG/PNG exporter. |
+| `preview.py` | The one local server (127.0.0.1:5810, or the next free port to 5830): serves the page from `PantographApp/ui/` and the live feed on `/ws`. |
 | `postprocess.py` | Post-processing effects — transforms over the plot command stream. Add new effects here. |
-| `svg_transform.py` | Offline GUI (tkinter): flip / filter an exported SVG, write a new one. |
+| `layout.py` | Where the drawing and the machine sit on the paper, and the one path from a tablet point to the machine. |
+| `svg_transform.py` | Flip / minimum-width transforms on a saved SVG, from the command line. Running it with a file opens that file in Pantograph. |
 | `dot_healer.py` | Offline CLI: rejoin strokes that a fast pen tore into a trail of dots. |
 | `saved_drawings/` | Example drawings, kept for documentation and as test data. The app saves to `Documents/Pantograph/` instead. |
 | `recording.py` | The drawing-recording format: records the live session, reads and writes plot SVGs. |
-| `PantographApp/` | App-specific code (settings, data folders, startup/shutdown) and the build guide. |
+| `PantographApp/` | App-specific code: the page (`ui/`), settings, data folders, the tools, the system file windows, startup/shutdown, and the build guide. |
 | `tests/` | `uv run pytest`: the recording format, stroke handling, and the whole app end to end. |
 | `AGENTS.md` | Project background and the iDraw OSC message reference. |
 | `MEETINGS.html` | Meeting history. |
@@ -297,15 +323,26 @@ need.)*
 
 ### Coordinates
 
-Canvas pixels → paper inches → physical AxiDraw inches, in one step
-(`canvas_to_physical`): aspect-preserving letterbox onto the paper, then a 90°
-landscape rotation, then optional flip H/V. Flip is applied last so every
-downstream setting (tilt compensation, effects) always sees the same physical
-axes. The mapping is recomputed whenever `/canvasWidth` or `/canvasHeight`
-arrives, so switching tablets just works.
+The paper is the anchor. Two rectangles sit on it (`layout.py`): the **drawing**
+(the tablet's canvas, in its own aspect ratio — movable, turnable, scalable)
+and the **AxiDraw** (its travel, from the chosen model — movable and turnable,
+with a home corner). A tablet point goes canvas → paper inches → the machine's
+own coordinates, measured from that home corner:
+`canvas_to_paper` then `paper_to_machine`. Anything outside the machine's reach
+isn't drawn at all — a pen can't draw past what it can touch — so the stroke
+stops at the edge and picks up again where it comes back within reach. The UI
+says when part of a drawing falls outside.
 
-Paper size lives at the top of `listen_to_idraw.py` (`PAPER_WIDTH_IN`,
-`PAPER_HEIGHT_IN`; currently 8.5 × 11).
+The layout is a saved setting (`axi_layout`), edited in Preferences → Edit
+layout. Until it's touched it fits itself to the paper: the drawing centred and
+filling the sheet, the machine centred with its long axis along the paper's
+long side — which is what earlier versions did with a fixed letterbox and a 90°
+rotation. The page draws from the same arithmetic, so the preview shows where
+the pen goes.
+
+The paper size is a setting too (8.5 × 11 in by default) and is no longer
+limited by the machine: a sheet bigger than the AxiDraw's reach is fine, and
+the layout shows how much of it the machine covers.
 
 ### Stroke boundaries
 
@@ -388,36 +425,45 @@ read on the machine rather than the internal landscape naming.
 
 ---
 
-## Browser controls (127.0.0.1:5810)
+## The page (127.0.0.1:5810)
 
-**Canvas** — four stacked layers in one fixed colour scheme: raw OSC input
-(grey), the in-progress stroke (transient overlay), the optimized centerline the
-pen actually follows (white), and only what the effect chain adds (pale blue).
-The two server-derived layers are drawn from the same commands that go to the
-plotter, so the gap between grey and white *is* the thinning.
+The page lives in `PantographApp/ui/` (`index.html`, `app.css`, `app.js`) and
+talks to the engine over one WebSocket. When it connects, the engine sends a
+`hello` with everything it needs (settings, the drawing so far, statuses, the
+effect list), so any number of tabs can be open and reloading loses nothing.
 
-**settings** — preview viewport width/height/origin in canvas units, flip H/V,
-x/y tilt, pen up / min pen down / max pen down servo positions (each with a
-*test* button that moves the pen there), variable pressure + update rate,
-optimizer enable / aggressiveness / min point distance / lag threshold / limit
-lag, live lag readout, home AxiDraw, reset to defaults. Settings are saved on
-the computer (`settings.json` in the per-user config folder) and apply at
-startup, even before a browser is open.
+**Canvas** — four stacked layers: the drawing (each stroke's colour as a grey
+of the same brightness, on white), the stroke in progress, the pen's path after
+optimizing (orange), and only what the effect chain adds (blue). The two
+engine-derived layers are drawn from the same commands that go to the plotter,
+so the gap between the drawing and the orange path *is* the thinning.
 
-**effects** — one block per registered effect, built automatically from
-`postprocess.effect_specs()`, with a live slider per tunable knob. Changing a
-knob rebuilds the chain immediately. **effects only** plots just what the
-effects add and drops the base centerline — for re-running a finished drawing
-over a base layer already on the paper.
+**Settings** (Plot and Effects tabs) are saved on the computer
+(`settings.json` in the per-user config folder) and apply at startup, even
+before a browser is open. The AxiDraw model and paper size are settings too;
+paper larger than the model reaches is clamped to its travel, and neither can
+change mid-plot. **Effects only** plots just what the effects add and drops the
+base line, for re-running a finished drawing over a base layer already on the
+paper.
 
-**download** — pick which layers to include, then PNG or SVG. Files are written
-into the drawings folder, `Documents/Pantograph/`. SVGs are built on the
-computer from its recording of the session: white paper, strokes in greyscale.
+**Importing a drawing** (Open file… → Import to live drawing) feeds it back
+through the live pipeline, so the paper mapping, flips, tilt, the effect chain
+and the optimizer all apply — and it's recorded into the drawing like anything
+else. Strokes drawn on the iPad while it runs appear at once and are plotted
+once the import has been fed in. **Pause** lifts the pen and stops both the
+feed and the plotter; **Cancel** drops what's queued and lifts the pen.
 
-**new drawing** — saves the current drawing (as `drawing-<date>_<time>.svg`)
-and starts a fresh one, on every open tab.
+**Disengage XY Motors** (plotter controller) lifts the pen and releases the
+motors so the carriage pushes by hand; the AxiDraw stays connected, and moves are
+ignored until you press **Re-engage XY Motors**. Home doesn't move — **Set Home**
+does that, taking wherever the carriage is as (0, 0). **Walk Home** drives the
+carriage back to it.
 
-**plot svg** — load an exported SVG and replay it.
+**Plotter behind** (top bar) is the gap between drawing a mark and the plotter
+drawing it, measured on a clock that only runs while marks are being drawn. So
+it climbs while you draw faster than the machine, falls whenever you stop, and
+reads 0 once it's caught up. It's also what decides when lines get simplified
+("Keeping up", Plot tab).
 
 ---
 
@@ -461,25 +507,33 @@ different post-processors switched on. Idle gaps are shortened to
 `REPLAY_MAX_GAP_SEC` so a drawing with long pauses doesn't take its original
 wall-clock time.
 
+A **saved** file is a picture of the sheet instead: its points are where the
+pen went on the paper, at 96 per inch, marked `"space": "paper"` with the
+sheet's size in `paperIn`. That way the file matches what was plotted —
+however the layout was turned or moved — and importing it puts the ink back in
+the same place. Files without `space` are read as tablet coordinates, as
+before.
+
 `recording.py` is the one implementation of this format: it records the live
 session (from the same messages the page receives), reads plot SVGs and writes
 them; `svg_transform.py` and `dot_healer.py` use it. The other readers are
-`listen_to_idraw.py` (`_replay_recording`) and `preview.py`'s `uploadSVG` (which
-only pulls the recording out of a file to send it for replay).
-Keep them in step.
+`listen_to_idraw.py` (`_replay_feed`) and `PantographApp/library.py` (the
+Drawings and Tools tabs). Keep them in step.
 
 ---
 
 ## Offline tools
 
-These run by hand on a finished SVG — siblings to the post-processors, not part
-of the live pipeline. Each rewrites the recording and regenerates matching
-visuals from it, so the picture and the plot stay in sync. Load the result with
-the preview's **plot svg** button.
+These work on a finished SVG, from the command line. They are deliberately
+**not** in the app: Pantograph plots what a pen and the machine can actually
+do, and doesn't edit finished drawings (the one exception is **Heal dots
+automatically**, which changes what the pen does *while* drawing, by carrying on
+instead of lifting). Each rewrites the recording and regenerates matching
+visuals from it, so the picture and the plot stay in sync.
 
 ```
-python svg_transform.py [input.svg]        # GUI: flip H/V, filter by min stroke width
-python svg_transform.py --selftest f.svg   # no GUI
+python svg_transform.py [input.svg]        # opens input.svg in Pantograph
+python svg_transform.py --selftest f.svg   # headless checks
 
 python dot_healer.py drawing.svg           # -> drawing_healed.svg
 python dot_healer.py drawing.svg --max-gap 20 --dry-run
