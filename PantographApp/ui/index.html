@@ -27,8 +27,8 @@
   </button>
 
   <div class="address" title="Type these into iDraw OSC on the iPad">
-    iDraw&nbsp;→ <code id="addr-ip">…</code> <span>port</span> <code id="addr-port">8800</code>
-    <button class="btn small quiet" id="copy-ip">Copy IP</button>
+    <span>IP:</span> <code id="addr-ip">…</code>
+    <span>Port:</span> <code id="addr-port">8800</code>
   </div>
 
   <div class="spacer"></div>
@@ -110,15 +110,9 @@
     <button class="menu-btn" id="menu-prefs-btn" aria-expanded="false" aria-haspopup="true">Preferences</button>
     <div class="menu-list" id="menu-prefs" hidden role="menu">
       <button role="menuitem" id="mi-prefs">Plotter preferences…</button>
-      <button role="menuitem" id="mi-layout">Edit layout…</button>
+      <div class="menu-row"><button class="menu-plain" id="mi-layout">Edit layout…</button><button class="info" data-info="Where the paper, the machine and your drawing sit in relation to each other. The paper is fixed; drag the orange rectangle to where the AxiDraw really stands on the sheet, and the turquoise one to where you want your drawing to land. Turn either with its ring, and resize the drawing from its corner. What the canvas shows is what gets plotted, and what gets saved." aria-label="About Edit layout"></button></div>
       <hr>
       <label class="menu-check"><input type="checkbox" id="inp-heal-live"><span>Heal dots</span><button class="info" data-info="A fast pen can tear one line into a line, a trail of dots, and another line. With this on, a stroke that starts within a few millimetres of where the last one ended, a moment later, carries on instead of lifting the pen." aria-label="About Heal dots"></button></label>
-    </div>
-  </div>
-  <div class="menu">
-    <button class="menu-btn" id="menu-fx-btn" aria-expanded="false" aria-haspopup="true">Effects</button>
-    <div class="menu-list" id="menu-fx" hidden role="menu">
-      <button role="menuitem" id="mi-effects">Effects…</button>
     </div>
   </div>
   <div class="spacer"></div>
@@ -131,21 +125,21 @@
       <div class="counters">
         <span>strokes <span class="num" id="stroke-count">0</span></span>
         <span>points <span class="num" id="pt-count">0</span></span>
-        <span>pressure <span class="num" id="pressure-val">—</span></span>
-        <span>tool <span id="tool-label">—</span></span>
+        <span>pressure <span class="num" id="pressure-val">-</span></span>
+        <span>tool <span id="tool-label">-</span></span>
       </div>
-      <div class="layer-toggles" role="group" aria-label="Layers shown and saved">
+      <div class="layer-toggles" role="group" aria-label="Layers shown">
         <span class="chip">
           <label><input type="checkbox" id="view-raw" checked><span class="swatch raw"></span>Drawing</label>
-          <button class="info" data-info="The drawing itself: what the iPad sent, in its own colours as greys." aria-label="About the Drawing layer"></button>
+          <button class="info" data-info="The drawing itself: what the iPad sent, in its own colours as greys. This is what a saved file contains, whatever is ticked here." aria-label="About the Drawing layer"></button>
         </span>
         <span class="chip">
           <label><input type="checkbox" id="view-opt"><span class="swatch opt"></span>Pen path</label>
-          <button class="info" data-info="The line the pen actually follows, after simplifying. It appears as the plotter draws it, on top of the drawing." aria-label="About the Pen path layer"></button>
+          <button class="info" data-info="The line the pen actually follows, after simplifying. It appears as the plotter draws it, on top of the drawing. Shown only - it is the machine's record of one run, so it is never saved." aria-label="About the Pen path layer"></button>
         </span>
         <span class="chip">
           <label><input type="checkbox" id="view-fx" checked><span class="swatch fx"></span>Effects</label>
-          <button class="info" data-info="The extra marks the effects add (Effects menu)." aria-label="About the Effects layer"></button>
+          <button class="info" data-info="The extra marks the effects add (the Effects tab). Shown only - effects are re-applied live from whatever is switched on, so they are never saved into a file." aria-label="About the Effects layer"></button>
         </span>
         <div class="info-bubble" id="info-bubble" role="status" hidden></div>
       </div>
@@ -174,7 +168,7 @@
             <li>Open <b>iDraw OSC</b> on the iPad.</li>
             <li>Set the IP to <span class="big-address" id="fr-ip">…</span></li>
             <li>Set the port to <span class="big-address" id="fr-port">8800</span></li>
-            <li>Draw a line — it appears here.</li>
+            <li>Draw a line - it appears here.</li>
           </ol>
           <p class="detail">Nothing arriving? <button class="link-btn" id="fr-troubleshoot">Troubleshoot the connection</button></p>
         </div>
@@ -182,7 +176,7 @@
 
       <div class="first-run" id="no-plotter" hidden>
         <div class="card">
-          <h2>No plotter connected <button class="info" data-info="Without a plotter you can draw, import drawings and save — everything except moving a pen. A saved canvas plots later, from any computer with an AxiDraw." aria-label="What works without a plotter"></button></h2>
+          <h2>No plotter connected <button class="info" data-info="Without a plotter you can draw, import drawings and save - everything except moving a pen. A saved canvas plots later, from any computer with an AxiDraw." aria-label="What works without a plotter"></button></h2>
           <ol>
             <li>Plug the AxiDraw in over USB, <b>and</b> switch on its own power supply.</li>
             <li>Press Connect.</li>
@@ -198,7 +192,7 @@
 
       <!-- the layout editor's own bar, over the paper -->
       <div class="layout-bar" id="layout-bar" hidden>
-        <span><b>Edit layout</b> — drag to move, the ring to turn<span id="layout-scale-hint">, the corner to resize</span>.</span>
+        <span><b>Edit layout</b> - drag to move, the ring to turn<span id="layout-scale-hint">, the corner to resize</span>.</span>
         <span class="layout-legend"><span class="key ipad"></span>drawing <span class="key axi"></span>AxiDraw</span>
         <span class="note" id="layout-warning" hidden>Part of the drawing is outside what the AxiDraw reaches.</span>
         <span class="spacer"></span>
@@ -225,9 +219,14 @@
       </div>
     </div>
 
-    <h2 class="panel-title">Plotter controller</h2>
+    <div class="tabs" role="tablist" aria-label="Sidebar">
+      <button class="tab" id="tab-controller" role="tab" aria-selected="true"
+              aria-controls="panel-controller">Plotter controller</button>
+      <button class="tab" id="tab-effects" role="tab" aria-selected="false"
+              aria-controls="panel-effects">Effects</button>
+    </div>
 
-    <div class="tab-panel" id="panel-controller">
+    <div class="tab-panel" id="panel-controller" role="tabpanel" aria-labelledby="tab-controller">
       <section class="group">
         <div class="btn-row machine-row">
           <button class="btn needs-motors" id="btn-home">Walk Home</button>
@@ -244,12 +243,11 @@
           <input type="number" id="inp-paper-w" min="1" max="40" step="0.01" aria-label="Paper width in inches"> ×
           <input type="number" id="inp-paper-h" min="1" max="40" step="0.01" aria-label="Paper height in inches"> in
         </div>
-        <p class="note" id="paper-note" hidden></p>
       </section>
 
       <section class="group">
         <h3>Pen</h3>
-        <p class="hint">Servo positions, 0–100. Lower goes further down.</p>
+        <p class="hint">Servo positions, 0-100. Lower goes further down.</p>
         <div class="field slider"><label for="inp-pen-up">Pen up</label><output id="inp-pen-up-val"></output>
           <button class="btn small needs-plotter" data-test="pen_test_up">Test</button>
           <input type="range" id="inp-pen-up" min="0" max="100" step="1"></div>
@@ -263,6 +261,18 @@
             <input type="range" id="inp-pen-down-max" min="0" max="100" step="1"></div>
         </div>
       </section>
+
+      <section class="group">
+        <button class="btn" id="controller-prefs">Plotter preferences…</button>
+      </section>
+    </div>
+
+    <div class="tab-panel" id="panel-effects" role="tabpanel" aria-labelledby="tab-effects" hidden>
+      <section class="group">
+        <h3>Effects <button class="info" data-info="Effects change what the plotter draws as you draw it - they add marks of their own, or reshape the pen's path. They never change your drawing: the canvas keeps what the iPad sent, and the extra marks are shown in blue. Switch one on and the next stroke you draw comes out changed." aria-label="About effects"></button></h3>
+        <label class="check"><input type="checkbox" id="fx-effects-only"><span>Effects only (skip the drawing itself)</span><button class="info" data-info="Plot only the marks the effects add, not the drawing underneath. Import a finished drawing to lay effects over it." aria-label="About effects only"></button></label>
+      </section>
+      <div class="group" id="fx-list"></div>
     </div>
   </aside>
 </main>
@@ -274,7 +284,7 @@
     <div class="window-body">
       <section class="group">
         <h3>Speed</h3>
-        <p class="hint">The machine's own units: speeds 1–110, acceleration 1–100.</p>
+        <p class="hint">The machine's own units: speeds 1-110, acceleration 1-100.</p>
         <div class="field"><label for="inp-speed-pendown">Speed, pen down</label><input type="number" id="inp-speed-pendown" min="1" max="110" step="1"></div>
         <div class="field"><label for="inp-speed-penup">Speed, pen up</label><input type="number" id="inp-speed-penup" min="1" max="110" step="1"></div>
         <div class="field"><label for="inp-accel">Acceleration</label><input type="number" id="inp-accel" min="1" max="100" step="1"></div>
@@ -289,8 +299,8 @@
       <section class="group">
         <h3>Table tilt</h3>
         <p class="hint">If the surface isn't level, these nudge the pen's height as it travels.</p>
-        <div class="field"><label for="inp-x-tilt">Left–right</label><span class="pair"><input type="number" id="inp-x-tilt" min="-10" max="10" step="0.1"><span class="unit">°</span></span></div>
-        <div class="field"><label for="inp-y-tilt">Top–bottom</label><span class="pair"><input type="number" id="inp-y-tilt" min="-10" max="10" step="0.1"><span class="unit">°</span></span></div>
+        <div class="field"><label for="inp-x-tilt">Left-right</label><span class="pair"><input type="number" id="inp-x-tilt" min="-10" max="10" step="0.1"><span class="unit">°</span></span></div>
+        <div class="field"><label for="inp-y-tilt">Top-bottom</label><span class="pair"><input type="number" id="inp-y-tilt" min="-10" max="10" step="0.1"><span class="unit">°</span></span></div>
       </section>
 
       <section class="group">
@@ -307,22 +317,6 @@
       </section>
 
       <div class="btn-row"><button class="btn" id="reset-settings">Reset settings to defaults</button></div>
-    </div>
-  </div>
-</div>
-
-<!-- Effects -->
-<div class="window" id="effects-window" hidden role="dialog" aria-modal="true" aria-labelledby="effects-title">
-  <div class="window-card">
-    <header><h2 id="effects-title">Effects</h2><button class="btn small close-window">Close</button></header>
-    <div class="window-body">
-      <section class="group">
-        <p class="hint">Change what the plotter draws, live. Shown in blue.</p>
-        <label class="check" title="Plot only the marks the effects add. Import a finished drawing to lay effects over it.">
-          <input type="checkbox" id="fx-effects-only"> Effects only (skip the drawing itself)
-        </label>
-      </section>
-      <div class="group" id="fx-list"></div>
     </div>
   </div>
 </div>

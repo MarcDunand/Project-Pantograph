@@ -151,7 +151,6 @@ let travel = { long: 11.81, short: 8.58 };
 let canvasSize = { width: 440, height: 956 };
 let lay = { auto: true, ipad: { cx: 4.25, cy: 5.5, w: 5.06, h: 11, rot: 0 },
             axi: { cx: 4.25, cy: 5.5, rot: 90 } };
-let modelName = '';
 
 function rotate(x, y, deg) {
   const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
@@ -353,7 +352,9 @@ function drawRuler(el, lengthPx, inches, vertical) {
   const perIn = lengthPx / inches;
   for (let at = 0; at <= inches + 1e-9; at += minor) {
     const isMajor = Math.abs(at / major - Math.round(at / major)) < 1e-6;
-    const p = at * perIn;
+    // The side ruler counts up from the bottom, the way a ruler stood against
+    // the paper does — not down from the top the way the canvas does.
+    const p = vertical ? lengthPx - at * perIn : at * perIn;
     const len = isMajor ? 9 : 4;
     c.beginPath();
     if (vertical) { c.moveTo(thick - len, p); c.lineTo(thick, p); }
@@ -372,6 +373,19 @@ function drawRulers(w, h, inset) {
   // Line the rulers up with the sheet, not with the margin around it.
   $('ruler-x').style.marginLeft = inset + 'px';
   $('ruler-y').style.marginTop = inset + 'px';
+  // And pull them across that margin, so they sit against the paper's edge
+  // rather than the canvas's. The canvas reaches MARGIN_IN past the sheet on
+  // every side (so the machine's rectangle has room), which would otherwise
+  // leave an inch and a half of blank table between a ruler and what it
+  // measures. The strip they move over is transparent canvas.
+  const pull = Math.max(0, inset - 4);
+  $('ruler-x').style.marginTop = -pull + 'px';
+  $('ruler-y').style.marginRight = -pull + 'px';
+  // The unit button belongs in the corner where the two rulers meet, so it
+  // travels with them.
+  const unit = $('unit-toggle');
+  unit.style.marginRight = -pull + 'px';
+  unit.style.marginTop = -pull + 'px';
   $('unit-toggle').textContent = units;
 }
 $('unit-toggle').onclick = () => {
@@ -613,7 +627,7 @@ function onPoint(msg) {
   if (canvasEmpty) { canvasEmpty = false; updateCards(); }
   unsaved = true;
   $('pressure-val').textContent = pressure.toFixed(2);
-  $('tool-label').textContent = tool || '—';
+  $('tool-label').textContent = tool || '-';
 }
 
 function onPenUp() {
@@ -623,7 +637,10 @@ function onPenUp() {
   currentPoints = []; isInStroke = false;
 }
 
-// ── layers shown (and saved) ────────────────────────────────────────────────
+// ── layers shown ──────────────────────────────────────────────
+//
+// What's ticked changes the view only. A saved file is always the drawing
+// alone — see _paper_space_svg.──────────
 
 const VIEW = [['view-raw', 'axi_view_raw', [canvas, overlay]],
               ['view-opt', 'axi_view_opt', [$('c-opt')]],
@@ -637,14 +654,11 @@ for (const [id, key] of VIEW) {
 function loadView() {
   for (const [id, key] of VIEW) { const v = store.get(key); if (v !== null) $(id).checked = v === '1'; }
   applyView();
+  showTab(store.get('axi_sidebarTab') === 'tab-effects' ? 'tab-effects' : 'tab-controller');
 }
-function shownLayers() {
-  return { raw: $('view-raw').checked, optimized: $('view-opt').checked, effect: $('view-fx').checked };
-}
-
 // the little i buttons
 const bubble = $('info-bubble');
-document.querySelectorAll('.info').forEach(b => {
+function wireInfo(b) {
   b.onclick = e => {
     e.stopPropagation();
     e.preventDefault();
@@ -665,11 +679,12 @@ document.querySelectorAll('.info').forEach(b => {
       bubble.style.top = bubble.style.left = bubble.style.right = '';
     }
   };
-});
+}
+document.querySelectorAll('.info').forEach(wireInfo);
 
 // ── menus and windows ───────────────────────────────────────────────────────
 
-const MENUS = [['menu-file-btn', 'menu-file'], ['menu-prefs-btn', 'menu-prefs'], ['menu-fx-btn', 'menu-fx']];
+const MENUS = [['menu-file-btn', 'menu-file'], ['menu-prefs-btn', 'menu-prefs']];
 function closeMenus() {
   for (const [b, m] of MENUS) { $(m).hidden = true; $(b).setAttribute('aria-expanded', 'false'); }
 }
@@ -702,13 +717,13 @@ document.addEventListener('keydown', e => {
 });
 
 $('mi-prefs').onclick = () => openWindow('prefs-window');
-$('mi-effects').onclick = () => openWindow('effects-window');
+$('controller-prefs').onclick = () => openWindow('prefs-window');
 $('mi-layout').onclick = () => { closeMenus(); startLayoutEdit(); };
 
 // ── File: new, import, save, discard ────────────────────────────────────────
 
 function saveAs() {
-  if (!send({ type: 'save_as', layers: shownLayers(), dir: store.get('axi_lastSaveDir') }))
+  if (!send({ type: 'save_as', dir: store.get('axi_lastSaveDir') }))
     saveStatus('Not connected', 'bad');
   else saveStatus('Choose where to save…');
 }
@@ -831,12 +846,12 @@ function syncAllToServer() {
 // ── machine and paper ───────────────────────────────────────────────────────
 
 const PAPERS = [
-  ['letter', 'Letter — 8.5 × 11 in', 8.5, 11],
-  ['legal', 'Legal — 8.5 × 14 in', 8.5, 14],
-  ['tabloid', 'Tabloid — 11 × 17 in', 11, 17],
-  ['a5', 'A5 — 5.83 × 8.27 in', 5.83, 8.27],
-  ['a4', 'A4 — 8.27 × 11.69 in', 8.27, 11.69],
-  ['a3', 'A3 — 11.69 × 16.54 in', 11.69, 16.54],
+  ['letter', 'Letter - 8.5 × 11 in', 8.5, 11],
+  ['legal', 'Legal - 8.5 × 14 in', 8.5, 14],
+  ['tabloid', 'Tabloid - 11 × 17 in', 11, 17],
+  ['a5', 'A5 - 5.83 × 8.27 in', 5.83, 8.27],
+  ['a4', 'A4 - 8.27 × 11.69 in', 8.27, 11.69],
+  ['a3', 'A3 - 11.69 × 16.54 in', 11.69, 16.54],
 ];
 let paperInfo = null;
 let pendingPaper = null, pendingModel = null;
@@ -856,7 +871,6 @@ function renderModels(models) {
 
 function renderPaper(info) {
   paperInfo = info;
-  modelName = info.model_name;
   const [w, h] = info.requested;
   const preset = PAPERS.find(p => Math.abs(p[2] - w) < 0.02 && Math.abs(p[3] - h) < 0.02);
   const sel = $('inp-paper');
@@ -876,9 +890,8 @@ function onLayout(msg) {
   paper = msg.paper;
   travel = msg.travel;
   canvasSize = msg.canvas;
-  const note = $('paper-note');
-  note.hidden = !msg.out_of_reach;
-  note.textContent = `Part of the drawing is outside what the ${modelName} reaches — see Preferences → Edit layout.`;
+  // The warning belongs where you'd act on it — the layout editor — not under
+  // the paper dropdown, where it sits on a setting that isn't the cause.
   $('layout-warning').hidden = !msg.out_of_reach;
   applyPaperSize(false);
   drawLayout();
@@ -908,6 +921,19 @@ function onPaper(msg) {
   renderPaper(msg);
 }
 
+// ── the sidebar's two tabs ──────────────────────────────────────────────────
+
+const SIDEBAR_TABS = [['tab-controller', 'panel-controller'], ['tab-effects', 'panel-effects']];
+function showTab(wanted) {
+  for (const [tab, panel] of SIDEBAR_TABS) {
+    const on = tab === wanted;
+    $(tab).setAttribute('aria-selected', String(on));
+    $(panel).hidden = !on;
+  }
+  store.set('axi_sidebarTab', wanted);
+}
+for (const [tab] of SIDEBAR_TABS) $(tab).onclick = () => showTab(tab);
+
 // ── effects (built from the engine's list of effects) ───────────────────────
 
 let EFFECT_SPECS = [];
@@ -931,7 +957,19 @@ function buildEffectsPanel(specs) {
     head.className = 'check';
     const cb = document.createElement('input');
     cb.type = 'checkbox'; cb.id = 'fx-' + spec.name; cb.checked = st.enabled;
-    head.append(cb, document.createTextNode(' ' + spec.label));
+    const name = document.createElement('span');
+    name.textContent = spec.label;
+    head.append(cb, name);
+    if (spec.blurb) {
+      const info = document.createElement('button');
+      info.className = 'info';
+      info.dataset.info = spec.blurb;
+      info.setAttribute('aria-label', 'About ' + spec.label);
+      // Inside a <label>, a click would toggle the checkbox as well.
+      info.addEventListener('click', e => e.preventDefault());
+      wireInfo(info);
+      head.append(info);
+    }
     box.append(head);
     const knobs = document.createElement('div');
     knobs.className = 'group';
@@ -1001,13 +1039,22 @@ const status = { osc: { state: 'stopped', port: 8800, message: '' }, oscAge: nul
                  plotter: { state: 'not_found', message: '', motors: false }, ips: [] };
 let skipPlotter = false;        // "Use without a plotter" was pressed
 
+// Nothing tells us iDraw has closed. OSC is connectionless — the iPad sends
+// points into the air and there is no socket to drop — so all we ever know is
+// how long it has been silent. Under a few seconds is a live hand; a couple of
+// minutes is a pause between strokes; past that, saying "Idle" next to a green
+// dot claims a connection we have no evidence for.
+const IPAD_IDLE_SEC  = 3;
+const IPAD_QUIET_SEC = 120;
+
 function ipadState() {
   const o = status.osc;
   if (o.state === 'port_busy') return ['bad', 'Problem', o.message || `Port ${o.port} is in use.`];
   if (o.state !== 'listening') return ['bad', 'Stopped', 'Not listening. Press Restart listener.'];
   if (status.oscAge === null) return ['', 'Waiting', 'Nothing from the iPad yet.'];
-  if (status.oscAge < 3) return ['ok', 'Receiving', 'Receiving points.'];
-  return ['ok', 'Idle', `Last point ${fmtAge(status.oscAge)} ago.`];
+  if (status.oscAge < IPAD_IDLE_SEC) return ['ok', 'Receiving', 'Receiving points.'];
+  if (status.oscAge < IPAD_QUIET_SEC) return ['ok', 'Idle', `Last point ${fmtAge(status.oscAge)} ago.`];
+  return ['', 'Quiet', `Nothing for ${fmtAge(status.oscAge)}. iDraw may be closed.`];
 }
 function fmtAge(s) { return s < 90 ? Math.round(s) + ' s' : Math.round(s / 60) + ' min'; }
 
@@ -1147,7 +1194,7 @@ $('osc-port-input').addEventListener('input', e => {
       send({ type: 'restart_osc', port });
     }, 2000);
   } else {
-    note.textContent = '1024–65535';
+    note.textContent = '1024-65535';
   }
 });
 $('plotter-connect').onclick = () => send({ type: 'connect_plotter' });
@@ -1157,7 +1204,6 @@ $('plotter-motors').onclick = async () => {
   send({ type: 'set_motors', on });
 };
 document.querySelectorAll('.copy-diag').forEach(b => { b.onclick = () => send({ type: 'diagnostics' }); });
-$('copy-ip').onclick = async () => toast(await copyText(primaryIP()) ? `Copied ${primaryIP()}` : 'Copy failed — select the address and copy it by hand.', false);
 
 $('quit-btn').onclick = async () => {
   if (await ask({ title: 'Quit Pantograph?', body: 'Pen up, motors off, canvas saved.', ok: 'Quit' }) !== 'ok') return;
@@ -1183,7 +1229,7 @@ function renderImport(msg) {
   }
   if (was && !msg.active && msg.outcome) {
     toast({ done: 'Import finished.', cancelled: 'Import cancelled.',
-            failed: 'The import stopped with an error — see the console window.' }[msg.outcome] || 'Import ended.',
+            failed: 'The import stopped with an error - see the console window.' }[msg.outcome] || 'Import ended.',
           msg.outcome === 'failed');
   }
 }
@@ -1284,7 +1330,9 @@ function handleMessage(msg) {
     el.style.color = msg.seconds < cap * 0.5 ? '' : msg.seconds < cap ? 'var(--warn)' : 'var(--bad)';
     const changed = ipadBucket(msg.osc_age) !== ipadBucket(status.oscAge);
     status.oscAge = msg.osc_age ?? null;
-    if (changed) renderStatus();
+    // Every half-second is too often to redraw for a label that rarely changes
+    // — but while the panel is open it is showing a number that counts up.
+    if (changed || !$('ipad-panel').hidden) renderStatus();
     return;
   }
   case 'osc_status': status.osc = msg; renderStatus(); return;
@@ -1301,7 +1349,11 @@ function handleMessage(msg) {
   }
 }
 // Re-render the iPad status only when its label would change (every tick otherwise).
-function ipadBucket(age) { return age === null || age === undefined ? 'none' : age < 3 ? 'recv' : 'idle'; }
+function ipadBucket(age) {
+  if (age === null || age === undefined) return 'none';
+  if (age < IPAD_IDLE_SEC) return 'recv';
+  return age < IPAD_QUIET_SEC ? 'idle' : 'quiet';
+}
 
 // ── start ───────────────────────────────────────────────────────────────────
 
@@ -1309,5 +1361,8 @@ applyPaperSize(false);
 connect();
 
 // For tests and the console.
+// The page's outside surface: what the tests drive it through. `handle` feeds
+// a message in exactly as the engine's socket would.
 window.pantograph = { newDrawing: () => send({ type: 'new_drawing' }), saveAs, showOpened,
-                      startLayoutEdit, endLayoutEdit, layout: () => lay };
+                      startLayoutEdit, endLayoutEdit, layout: () => lay,
+                      handle: handleMessage };

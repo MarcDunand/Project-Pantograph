@@ -187,6 +187,7 @@ class Effect:
 
     name = "effect"
     label = "effect"          # human-readable name for the browser's effects panel
+    blurb = ""                # one or two plain sentences, shown behind the panel's "i"
     default_on = False        # initial checkbox state in the effects panel
 
     # Tunable numeric knobs exposed to the browser's effects panel. Each entry:
@@ -250,6 +251,10 @@ class Zigzag(Effect):
 
     name = "zigzag"
     label = "zigzag"
+    blurb = ("Squares off the pen's path. Instead of going straight from one point "
+             "to the next, it travels all the way across, then all the way down, so "
+             "a line comes out as a staircase. Sample every sets how many points "
+             "each step spans - higher is bigger steps and a coarser line.")
     default_on = True
 
     # How many incoming points each edge of the zigzag spans.
@@ -323,6 +328,9 @@ class PressureHatch(Effect):
 
     name = "pressure_hatch"
     label = "pressure hatch"
+    blurb = ("Draws the stroke as you made it, then goes back over it and adds short "
+             "lines across it wherever you pressed hard. The harder the press, the "
+             "longer the line, so leaning into a mark grows a comb of hatching on it.")
 
     # Below this normalised pressure (0 = no press, 1 = hardest the Pencil
     # reports) a point gets no hatch at all.
@@ -437,6 +445,10 @@ class StrokeConnector(Effect):
 
     name = "stroke_connector"
     label = "stroke connector"
+    blurb = ("After each stroke, draws a straight line from its middle to the middle "
+             "of an earlier stroke, with a small circle at each end. Nearby strokes "
+             "are the likeliest partners, but a long reach across the paper happens "
+             "now and then.")
 
     # Pressure for the connecting line.
     LINE_PRESSURE = 0
@@ -574,6 +586,10 @@ class Mirror(Effect):
 
     name = "mirror"
     label = "mirror"
+    blurb = ("Now and then doubles a short stroke with a left-to-right mirrored copy "
+             "of itself, laid over the original. Long strokes are never mirrored; "
+             "max len sets how long is too long, and mirror chance how often it "
+             "happens.")
 
     # Longest stroke still eligible to be mirrored, as a fraction of the page
     # width (the drawing's left–right extent). 0.10 = up to a tenth of the page
@@ -691,6 +707,7 @@ def effect_specs() -> list:
         specs.append({
             "name":    name,
             "label":   getattr(cls, "label", name),
+            "blurb":   " ".join((getattr(cls, "blurb", "") or "").split()),
             "enabled": getattr(cls, "default_on", False),
             "params":  knobs,
         })

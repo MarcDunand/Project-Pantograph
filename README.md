@@ -242,16 +242,20 @@ yet. See step 10 for what to do with the drawing.
   state; click one to connect, restart the listener, or open a
   **Troubleshoot** checklist.
 - **Menu bar:** **File** (New canvas, Import to canvas…, Save as…, Discard
-  canvas), **Preferences** (Plotter preferences…, Edit layout…, Heal dots
-  automatically) and **Effects**. **Quit** lifts the pen,
-  turns the motors off and saves the drawing.
+  canvas) and **Preferences** (Plotter preferences…, Edit layout…, Heal
+  dots). **Quit** lifts the pen, turns the motors off and saves the drawing.
 - **The paper** in the middle is the canvas, at the paper size set in the
   plotter controller, with rulers in inches or millimetres (click the unit to
   switch). Two faint rectangles show where things sit on it: the drawing
   (turquoise) and the AxiDraw's reach (orange, with a house at its home
   corner). The chips above choose which layers show: the drawing itself, the
   pen's path (the machine's orange, drawn as the pen draws it), and what the
-  effects add (blue).
+  effects add (blue). They change the view only — **a saved file is always the
+  drawing alone**. The pen's path is the machine's record of one run, and
+  effects are re-applied live from whatever is switched on, so neither is
+  something you drew and neither is written to a file.
+- **The sidebar** has two tabs: **Plotter controller** (the machine's controls,
+  model and paper, pen positions) and **Effects**.
 - **Preferences → Edit layout…** is where those rectangles move. Drag either
   one, use its ring to turn it, and the drawing's corner to resize it. Set the
   AxiDraw's rectangle to where the machine really sits on the sheet, and the
@@ -438,7 +442,7 @@ optimizing (orange), and only what the effect chain adds (blue). The two
 engine-derived layers are drawn from the same commands that go to the plotter,
 so the gap between the drawing and the orange path *is* the thinning.
 
-**Settings** (Plot and Effects tabs) are saved on the computer
+**Settings** (Plotter preferences and Effects) are saved on the computer
 (`settings.json` in the per-user config folder) and apply at startup, even
 before a browser is open. The AxiDraw model and paper size are settings too;
 paper larger than the model reaches is clamped to its travel, and neither can

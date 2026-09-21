@@ -2076,11 +2076,17 @@ def new_drawing() -> None:
 SVG_PX_PER_IN = 96          # the unit a saved file is drawn in
 
 
-def _paper_space_svg(include_raw: bool = True, optimized: bool = False, effect: bool = False) -> str:
+def _paper_space_svg() -> str:
     """
     The drawing as it sits on the paper — which is what was plotted, and so
     what gets saved. Points move from the tablet's coordinates onto the sheet
-    through the layout; the derived layers are already in paper inches.
+    through the layout.
+
+    A saved file is the drawing and nothing else. The pen path and the effect
+    marks are the machine's account of a particular run: the path is where the
+    carriage went after simplifying, and the effects are re-applied live from
+    whatever is switched on now. Neither is something you drew, so neither is
+    saved — the same reason a plotted sheet carries ink, not a plan of the ink.
     """
     k = SVG_PX_PER_IN
     rec = _recorder.recording()
@@ -2095,18 +2101,7 @@ def _paper_space_svg(include_raw: bool = True, optimized: bool = False, effect: 
         st["canvasWidth"], st["canvasHeight"] = PAPER_WIDTH_IN * k, PAPER_HEIGHT_IN * k
     rec["space"] = "paper"
     rec["paperIn"] = [PAPER_WIDTH_IN, PAPER_HEIGHT_IN]
-
-    layers = _recorder.layers()
-    chosen = {}
-    for name, strokes in layers.items():
-        if (name == "optimized" and optimized) or (name == "effect" and effect):
-            for st in strokes:
-                st["size"] = st["size"] * k
-                for p in st["points"]:
-                    p[0], p[1] = p[0] * k, p[1] * k
-            chosen[name] = strokes
-    return recording.build_svg(rec, PAPER_WIDTH_IN * k, PAPER_HEIGHT_IN * k,
-                               include_raw=include_raw, layers=chosen)
+    return recording.build_svg(rec, PAPER_WIDTH_IN * k, PAPER_HEIGHT_IN * k)
 
 
 def _to_canvas_space(rec: dict) -> dict:
@@ -2230,8 +2225,7 @@ def _import_opened(msg: dict | None = None) -> dict | None:
 
 
 def _save_as(msg: dict):
-    """Save window → write the drawing there, with the layers the page is showing."""
-    layers = msg.get("layers") or {}
+    """Save window → write the drawing there. Always the drawing alone."""
     start_dir = Path(msg["dir"]) if msg.get("dir") else _drawings_dir
     suggested = recording.timestamped_name()
     if _recorder.is_empty():
@@ -2239,9 +2233,7 @@ def _save_as(msg: dict):
 
     def write(chosen):
         try:
-            svg = _paper_space_svg(include_raw=bool(layers.get("raw", True)),
-                                   optimized=bool(layers.get("optimized")),
-                                   effect=bool(layers.get("effect")))
+            svg = _paper_space_svg()
             recording.write_atomic(Path(chosen), svg)
         except OSError as e:
             return {"type": "saved", "ok": False, "error": str(e)}

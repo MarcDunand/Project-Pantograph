@@ -413,3 +413,31 @@ def test_help_prints_on_a_console_that_is_not_utf8():
     assert r.returncode == 0, r.stderr
     assert "UnicodeEncodeError" not in r.stderr
     assert "--dry-run" in r.stdout
+
+
+@pytest.mark.parametrize("age,label,live", [
+    (None, "Waiting", False),
+    (1.0,  "Receiving", True),
+    (30.0, "Idle", True),
+    (600.0, "Quiet", False),
+])
+def test_the_ipad_goes_quiet_when_idraw_has_been_closed(app, age, label, live):
+    """
+    OSC is connectionless, so a closed iDraw looks exactly like a long pause.
+    After a couple of minutes the page stops calling it "Idle" next to a green
+    dot, which claimed a connection that wasn't there.
+    """
+    sync_api = pytest.importorskip("playwright.sync_api")
+    with sync_api.sync_playwright() as pw:
+        browser = pw.chromium.launch(channel="msedge", headless=True)
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{app.ui_port}")
+        page.wait_for_function("document.getElementById('conn-label').textContent === 'live'",
+                               timeout=10000)
+        # Through the real message path: this is the broadcast the engine
+        # sends twice a second, carrying how long the iPad has been silent.
+        page.evaluate("a => window.pantograph.handle({ type: 'lag', seconds: 0, osc_age: a })", age)
+        assert page.inner_text("#ipad-label") == label
+        dot = page.get_attribute("#ipad-dot", "class")
+        assert ("ok" in dot) == live, dot
+        browser.close()

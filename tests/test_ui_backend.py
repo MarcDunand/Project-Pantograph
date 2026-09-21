@@ -7,6 +7,7 @@ over the WebSocket the way the page drives it.
 import os
 import time
 
+import recording
 from conftest import ROOT
 from test_app import App, app, hello, send, send_stroke, svgs, wait_until  # noqa: F401 — app is a fixture
 
@@ -105,6 +106,27 @@ def test_save_as_writes_where_it_is_told(app):
     saved = of(send(app, {"type": "save_as", "path": out, "layers": {"raw": True}}), "saved")[0]
     assert saved["ok"] and saved["path"] == "picked.svg" and os.path.exists(out)
     assert "<metadata>" in open(out, encoding="utf-8").read()
+
+
+def test_a_saved_file_is_the_drawing_alone(app):
+    """
+    Whatever the page is showing, a saved file holds the drawing and nothing
+    else. The pen path is the machine's account of one run and the effect marks
+    are re-applied live from the current settings, so neither is something the
+    artist drew — and neither is saved.
+    """
+    send(app, {"type": "set_effect_enabled", "name": "zigzag", "enabled": True}, wait=0.2)
+    send_stroke(app.osc_port, n=25)
+    time.sleep(0.8)
+    out = os.path.join(app.data_dir, "layers.svg")
+    saved = of(send(app, {"type": "save_as", "path": out,
+                          "layers": {"raw": True, "optimized": True, "effect": True}},
+                    wait=1.5), "saved")[0]
+    assert saved["ok"], saved
+    svg = open(out, encoding="utf-8").read()
+    assert "<metadata>" in svg, "the recording is what makes a file importable"
+    assert recording.OPTIMIZED_COLOR not in svg, "the pen path was saved"
+    assert recording.EFFECT_COLOR not in svg, "the effect marks were saved"
 
 
 def test_nothing_to_save_yet(app):

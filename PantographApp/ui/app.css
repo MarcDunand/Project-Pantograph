@@ -89,7 +89,11 @@ button, input, select { font: inherit; color: inherit; }
 .dot.ok   { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
 .dot.warn { background: var(--warn); }
 .dot.bad  { background: var(--bad); }
-.address { display: flex; align-items: center; gap: var(--s2); color: var(--muted); }
+/* Baseline, not centre: the labels are 14px sans and the values 13px mono, so
+   their line boxes are different heights. Centring those boxes leaves the
+   glyphs sitting a pixel or two apart; aligning the baselines is what makes a
+   label and its number read as one line of text. */
+.address { display: flex; align-items: baseline; gap: var(--s2); color: var(--muted); }
 .address code { font-family: var(--mono); color: var(--ink); font-size: 13px; }
 .spacer { flex: 1; }
 .meta { color: var(--muted); font-size: 12px; display: flex; gap: var(--s3); align-items: center; }
@@ -122,8 +126,16 @@ button, input, select { font: inherit; color: inherit; }
   white-space: nowrap;
 }
 .menu-check > span { flex: none; }        /* the label stays on one line */
-.menu-check > .info { margin-left: 0; }
-.menu-list > button:hover, .menu-check:hover { background: var(--hover); }
+.menu-check > .info { margin-left: calc(-1 * var(--s2)); }   /* against the label, not a column away */
+.menu-list > button:hover, .menu-check:hover, .menu-row:hover { background: var(--hover); }
+/* A menu item that carries an "i": a button can't contain another button, so
+   the row is the container and the item inside it keeps the item's look. */
+.menu-row { display: flex; align-items: center; border-radius: var(--radius); }
+.menu-plain {
+  flex: 0 1 auto; text-align: left; border: 0; background: none; cursor: pointer;
+  padding: 6px var(--s2); font-size: 13px; white-space: nowrap;
+}
+.menu-row > .info { margin-left: calc(-1 * var(--s2)); }
 .menu-list > button.danger { color: var(--bad); }
 .menu-list hr { border: 0; border-top: 1px solid var(--line); margin: var(--s1) 0; }
 .menubar-note { align-self: center; font-size: 12px; color: var(--muted); }
@@ -186,7 +198,9 @@ button, input, select { font: inherit; color: inherit; }
 }
 .info::after { content: "i"; }
 .info:hover, .info[aria-pressed="true"] { background: var(--ink); }
-.chip .info { margin-bottom: 4px; }
+/* The chip's 6px gap is meant for the checkbox and its label. The "i" belongs
+   to the label, not beside it, so it takes that gap back. */
+.chip .info { margin-bottom: 4px; margin-left: -5px; }
 .info-bubble {
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 25;
   width: min(300px, 80vw); padding: var(--s2) var(--s3);
@@ -208,7 +222,17 @@ button, input, select { font: inherit; color: inherit; }
 .table { position: relative; min-height: 0; display: grid; place-items: center; overflow: hidden; }
 .sheet { display: grid; grid-template-columns: auto auto; gap: 2px; justify-content: center; }
 .ruler { display: block; }
-.unit-toggle { width: 36px; min-height: 20px; font-size: 11px; color: var(--muted); justify-self: end; }
+/* Anchored to the end of its column, so the negative margin that pulls it
+   across the canvas's margin has something to pull against. Without this it
+   sits at the column's start and the pull does nothing. */
+#ruler-y { justify-self: end; }
+/* In the corner where the two rulers meet: end of the side ruler's column,
+   top of the bottom ruler's row (JS gives it the same pull the rulers get).
+   align-self keeps it from stretching down the whole row. */
+.unit-toggle {
+  width: 36px; height: 22px; min-height: 0; padding: 0; font-size: 11px;
+  color: var(--muted); justify-self: end; align-self: start;
+}
 .paper-caption { grid-column: 1 / -1; justify-self: center; }
 #canvas-wrap { position: relative; }
 /* the sheet of paper itself, with room around it for a machine that reaches
@@ -339,6 +363,7 @@ input[type="number"] { width: 84px; text-align: right; font-family: var(--mono);
 select { max-width: 100%; }
 input[type="checkbox"] { accent-color: var(--ink); width: 16px; height: 16px; margin: 0; }
 .check { display: flex; align-items: center; gap: var(--s2); cursor: pointer; }
+.check > .info { margin-left: calc(-1 * var(--s2)); }   /* against the label it explains */
 .dim { opacity: .45; }
 .pair { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
 .note { font-size: 12px; color: var(--warn); margin: 0; }

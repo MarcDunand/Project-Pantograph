@@ -112,10 +112,13 @@ rem ---------------------------------------------------------------------------
 "%UV%" run --locked --no-dev --project "%ROOT%" python "%ROOT%\listen_to_idraw.py" %*
 set "RC=%ERRORLEVEL%"
 
-rem -- 0 is a clean quit. Ctrl+C gives 130 (and asks "Terminate batch job?",
-rem -- which is harmless). Anything else is worth showing.
+rem -- 0 is a clean quit. Ctrl+C gives 130, or Windows' own STATUS_CONTROL_C_EXIT
+rem -- (-1073741510), and asks "Terminate batch job?" -- all harmless. Anything
+rem -- else is worth showing.
 if "%RC%"=="0" goto :eof
 if "%RC%"=="130" goto :eof
+if "%RC%"=="-1073741510" goto :eof
+if "%RC%"=="3221225786" goto :eof
 
 echo.
 echo   Pantograph stopped with an error (code %RC%).

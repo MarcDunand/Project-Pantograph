@@ -115,6 +115,40 @@ unless marked otherwise:
 - Each machine button is as wide as its own label. They were one shared width
   first, and "Re-engage XY Motors" spilled outside its border.
 
+**UI round 5 (2026-09-21).** From Marc's second pass:
+
+- **A saved file is the drawing alone**, whatever the layer checkboxes show.
+  The pen path is the machine's account of one particular run, and the effect
+  marks are re-applied live from whatever is switched on now — neither is
+  something the artist drew, so neither is saved. The checkboxes are a view
+  control only. `_paper_space_svg()` takes no arguments any more, and
+  `test_a_saved_file_is_the_drawing_alone` pins it.
+  - This also closes a trap: saving with "Drawing" unticked used to write a
+    file with no `<metadata>`, which Pantograph could never import again.
+- **Effects moved out of a window into a sidebar tab** beside the plotter
+  controller, with an "i" for effects as a whole, one for "Effects only", and
+  one per effect. Each effect's text is a `blurb` on its class in
+  `postprocess.py`, served through `effect_specs()`, so a new effect brings its
+  own explanation. The menu bar is File and Preferences only.
+- **Rulers sit against the paper**, not against the canvas — which reaches
+  MARGIN_IN past the sheet, so they had an inch and a half of empty table
+  between them and what they measure. The side ruler counts up from the bottom,
+  and the unit button rides along to the corner where the two meet.
+- **The top bar reads `IP:` / `Port:`**, no Copy IP, with the labels and values
+  on a shared baseline (see G-54).
+- **Em and en dashes are out of the interface copy** — plain hyphens instead,
+  ranges included (`0-100`, `Left-right`, `1024-65535`). `index.html` has
+  neither character left; code comments keep them.
+- The out-of-reach warning now appears only in the layout editor, where you'd
+  act on it, not under the paper dropdown.
+
+**Checked on the machine 2026-09-21, both passed:** effects driven from the new
+sidebar tab plot as they did from the window, and the rulers still match a real
+ruler held against the sheet after moving in and flipping the side scale.
+
+`install-windows.ps1` points at `MarcDunand/Project-Pantograph`, taken from the
+repo's own remote — the `OWNER/REPO` placeholder is gone.
+
 **What Pantograph is (Marc, 2026-09-20).** A translator between physical and
 digital media — a pantograph — not an SVG editor. A feature earns its place by
 matching something you can do with a pen and the machine: you can't
@@ -978,9 +1012,44 @@ Both installers:
 - Installs to `~/Pantograph/`, with an optional Desktop shortcut to
   `PantographApp/Pantograph.command`. Never uses `sudo`.
 
-- **Checkpoint:** on a Windows account and a Mac that have no Python or uv,
-  **both** routes work end to end: the one-line installer and the click
-  download. The second launch works offline.
+**Built and tested 2026-09-21 (Windows).** `PantographApp/Pantograph.bat` and
+`install-windows.ps1` both work, verified against a private runtime folder
+(`LOCALAPPDATA` pointed at a scratch directory) so the real install was never
+touched:
+
+- Clean first run: fetches uv 0.12.17, then CPython 3.12.14 and 20 packages,
+  then starts the app. Second launch: 0.7 s, no network.
+- The app really runs through it — HTTP 200 on the UI port, the usual startup
+  banner — not just `--help`.
+- The installer unpacks to `%LOCALAPPDATA%\Pantograph\app\` and makes
+  Start-menu and Desktop shortcuts with a real icon. Re-running it updates:
+  a file left in the old `app` was gone afterwards, and `runtime\` (uv, Python,
+  the venv) survived untouched.
+- Both guards fire: running from a `\Temp\` or `.zip\` path says "extract the
+  zip first" (G-7), and a launcher without the app beside it says so.
+
+Two things found by building it, both now fixed:
+
+- **`uv run` installed the dev group** — pytest and playwright, 37 MB of
+  browser automation an end user has no use for. The launcher passes
+  `--no-dev` (28 packages → 20).
+- **`curl` and `tar` must be called by full path** from `%SystemRoot%\System32`.
+  Git for Windows puts a GNU `tar` on PATH, which cannot read a zip at all: it
+  reads the `C:` in the destination as a remote host and fails with "resolve
+  failed". There's a PowerShell `Expand-Archive` fallback for Windows 10 builds
+  before 17063, which have no `tar`.
+
+`PantographApp/ui/icon.ico` is generated from the same drawing as `icon.svg` by
+`PantographApp/deferred/make_icon.py` — seven sizes, drawn directly rather than
+rasterised, since the mark is only lines and two dots and a rasteriser would be
+a dependency.
+
+- [ ] **Checkpoint (Marc):** on a Windows account with no Python or uv, the
+  one-line installer and the click download both work end to end, and the
+  second launch works offline. Needs a real release published first (Phase 9),
+  since the installer's default URL points at `releases/latest`.
+- [ ] `install-windows.ps1` has `$Repo = 'OWNER/REPO'` as a placeholder. It
+  needs the real repository before release.
 
 ### Phase 9: CI and release
 
@@ -1199,6 +1268,10 @@ The known risks, each with its mitigation and phase. Re-check before release.
 | G-49 | A stroke drawn while an import *plotted* was shown and recorded but never plotted (Marc, 2026-09-20). Strokes are held back during an import so two writers don't splice into one stroke — but feeding takes seconds and plotting takes minutes, and the hold was keyed to the whole import, so anything drawn during the catching-up sat in `_live_pending` for good | The hold is keyed to `_import_feeding`, set only while points are being fed. Once the feed is in, the flush drains what was held and clears it, and later strokes queue themselves behind the import the ordinary way. `_wait_for_plotter` waits on the import's own marked commands, not on the queue, so those later strokes don't keep it "running" | 6 |
 | G-50 | Changing the paper reopened the preview for the last file opened (Marc, 2026-09-20) | Resizing the canvases asks for a fresh `hello` (G-47), and `hello` carries the open file. The page now shows that preview on the first `hello` only — a later one is a catch-up, not a request to open a window | 6 |
 | G-51 | An image sized with `max-height: 100%` inside a `1fr` grid track doesn't fit it: the track has a used height but its *computed* height is `auto`, so the percentage never resolves, and the drawing overflowed across the preview window's header | The window has a definite `height`, and the drawing is absolutely placed inside its box, where percentages resolve against a real height | 5 |
+| G-52 | The iPad read *Idle* with a green dot forever, including when iDraw had been closed since before the app started (Marc, 2026-09-21) | OSC is connectionless: the iPad sends into the air, there is no socket to drop, and silence is all we ever observe. Past `IPAD_QUIET_SEC` (2 min) the page says *Quiet* with a grey dot and "iDraw may be closed" — the honest claim, rather than implying a connection | 5 |
+| G-53 | `--help` crashed on a fresh Windows console: the text contains `→`, and the UTF-8 stream reconfigure lived in `setup_logging`, which runs long after argparse has printed and exited | `shell.use_utf8_console()`, called first thing in `main()`. `tests/test_app.py` runs the real program under `PYTHONIOENCODING=cp1252` | 8 |
+| G-54 | Labels and values in the top bar sat a pixel or two off each other | The row centred each flex item's *box*, and 14px sans labels and 13px mono values have different line-box heights. `align-items: baseline` aligns the text instead of the boxes | 5 |
+| G-55 | A negative margin pulled the bottom ruler across the canvas margin but did nothing for the side one | Its grid column was sized by the unit button, and a grid item sits at its column's start, so there was nothing to pull against. `justify-self: end` anchors it to the column's end first | 5 |
 
 (Resolved and removed: G-25 Windows on ARM, not handled by decision; G-27
 update notices, cut; G-28 OSC threading, done; G-32 lxml builds, covered by
