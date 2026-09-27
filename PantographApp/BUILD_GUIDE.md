@@ -12,7 +12,8 @@ GitHub (published 2026-09-27 04:42 UTC; the release workflow passed). Phase 10
 is under way: the README is rewritten (2026-09-27), and what's left is the
 short machine checklist in §6, starting with Marc running the installed copy
 on his own PC. **The install command in v0.1.0 is stopped by Microsoft
-Defender** (G-57); the fix is in the repo and ships as v0.1.1. The pressure-lag fix is deferred until an Apple Pencil is available
+Defender** (G-57). The fix shipped as **v0.1.1** (published 2026-09-27
+06:40 UTC), and Marc installed it with the new command and has it working. The pressure-lag fix is deferred until an Apple Pencil is available
 (see Phase −1). The Mac package waits until there's a Mac to test on.
 
 **Hardware checks.** These can't be verified without the iPad and AxiDraw.
@@ -1222,6 +1223,9 @@ runs its own Python from `%LOCALAPPDATA%\Pantograph\runtime`, a different
 `python.exe` that Windows' firewall has never seen.
 
 **Still to do (Windows):**
+- [x] **Done 2026-09-27 with v0.1.1:** the new one-line command installed it
+      on Marc's PC and the app works. Still untested: a PC that has never had
+      Python or uv on it, and the download route.
 - [ ] **The install, on Marc's PC** (no second machine for now, so not a
       truly fresh one). The one-line installer works end to end,
       Pantograph opens in the browser, and a second launch works with Wi-Fi

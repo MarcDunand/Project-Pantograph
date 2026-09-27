@@ -373,20 +373,39 @@
       </div>
     </div>
 
+    <!-- Work session: the app's UI, installer and first release -->
+    <div class="entry">
+      <div class="card">
+        <span class="badge">Work session</span>
+        <span class="date">September 19–27, 2026</span>
+        <h2>The app ships: Pantograph v0.1 for Windows</h2>
+        <p class="session">Several sessions: the new interface and machine checks (19th–21st), then the release (26th–27th).</p>
+        <p>Pantograph is now a <strong>real download</strong>. One command in PowerShell installs it, it shows up in the Start menu, and it runs on a computer with no Python on it. Version 0.1.1 is published on GitHub.</p>
+        <ul>
+          <li><strong>A new interface:</strong> the canvas is the sheet of paper, with rulers; a layout editor shows where the AxiDraw and the drawing sit on it, and the plot lands where the screen says. Status buttons for the iPad and plotter have troubleshooting checklists built in, and effects and machine controls each have their own tab.</li>
+          <li><strong>A guiding rule, from Marc:</strong> Pantograph translates between paper and screen; it isn't an editor. Features have to match what a pen and plotter can physically do, so the tools for retroactively editing a finished drawing were removed.</li>
+          <li><strong>Machine fixes:</strong> quitting now really releases the motors (an old shutdown call had never worked), and drawing on the iPad during an import now plots. Speeds default to the AxiDraw's stock settings.</li>
+          <li><strong>Automatic testing on GitHub:</strong> every push runs the tests and a full practice install; tagging a version builds and publishes the download.</li>
+          <li><strong>A scare on release night:</strong> Windows' antivirus flagged the original install command as a trojan, because it looks like the way malware fetches scripts. Switching to a plainer command fixed it; that fix is what went out as v0.1.1.</li>
+          <li>The README was rewritten around the download, with a troubleshooting section for firewalls and for school or work networks that block devices from talking to each other.</li>
+        </ul>
+      </div>
+    </div>
+
   </div><!-- /timeline -->
 
   <section class="status">
     <h2>Where things stand</h2>
     <ul>
       <li>Live pipeline (iPad → preview → AxiDraw) is working.</li>
-      <li>Pressure-driven pen depth, tilt/flip calibration, and a percentage-based update throttle for stutter are all in.</li>
+      <li>Pressure-driven pen depth, tilt calibration, and a layout editor for where the plot lands on the paper are all in.</li>
       <li>A post-processing framework (<code>postprocess.py</code>) exists with perpendicular pressure lines, mirror, and centerline-width-from-pressure effects, plus SVG upload/replay and terminal-log reconstruction.</li>
-      <li>Standalone offline tools sit alongside the live pipeline, each rewriting the recording and regenerating visuals from it: <code>svg_transform.py</code> (GUI — flip H/V, filter by min width) and <code>dot_healer.py</code> (rejoin strokes a fast pen tore into a trail of dots).</li>
+      <li>Two command-line tools for finished drawings stay outside the app: <code>svg_transform.py</code> (flip, minimum width) and <code>dot_healer.py</code> (rejoin strokes a fast pen tore into dots).</li>
       <li>The same program now runs without an AxiDraw (the separate <code>iDraw_to_svg/</code> version was removed on September 18): it records drawings to plottable SVGs for plotting later.</li>
-      <li><strong>The Pantograph app is being built</strong> (see <a href="PantographApp/BUILD_GUIDE.md">the build guide</a>): the engine, server and recording groundwork are done; the new UI, installers and release are next.</li>
+      <li><strong>The Pantograph app is released for Windows</strong> (v0.1.1, September 27): a one-line install, no Python needed. Mac users run it from source for now. Details in <a href="PantographApp/BUILD_GUIDE.md">the build guide</a>.</li>
       <li>Both replay bugs are <strong>fixed</strong> — the mid-plot stop (thread race) and the double-plot re-record.</li>
       <li><strong>Demoed live on video:</strong> Gina drawing while the AxiDraw concurrently recreated the drawing on paper.</li>
-      <li><span class="open"><strong>Known open items:</strong></span> a hardware check of the September 18 changes (listed in the build guide); the pressure-lag fix, waiting on a Pencil; preview rendering quality (smoothing) remains a longer-term want from the early plan.</li>
+      <li><span class="open"><strong>Known open items:</strong></span> a Mac package, once there's a Mac to test on; the pressure-lag fix, waiting on a Pencil; preview rendering quality (smoothing) remains a longer-term want from the early plan.</li>
     </ul>
   </section>
 
