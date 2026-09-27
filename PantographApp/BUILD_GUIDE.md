@@ -1048,23 +1048,51 @@ a dependency.
   one-line installer and the click download both work end to end, and the
   second launch works offline. Needs a real release published first (Phase 9),
   since the installer's default URL points at `releases/latest`.
-- [ ] `install-windows.ps1` has `$Repo = 'OWNER/REPO'` as a placeholder. It
-  needs the real repository before release.
+- [x] `install-windows.ps1` points at `MarcDunand/Project-Pantograph` (done
+  2026-09-21, taken from the repo's own remote).
 
 ### Phase 9: CI and release
 
-- [ ] GitHub Actions on `windows-latest` and `macos-latest`: `setup-uv`,
-      `uv sync --locked`, `uv run pytest`, plus a **launcher smoke test**. The
-      real launcher runs with `--smoke-test`: it starts the app, checks
-      `/health` and `hello`, sends a scripted OSC stroke, saves, checks the
-      SVG and quits. This proves the Mac install path without owning a Mac.
-- [ ] Release on a version tag:
-  - build `Pantograph-<version>.zip` with `git archive`. Mark dev-only and
-    bulky files `export-ignore` in `.gitattributes`: `tests/`, `.github/`,
-    `.claude/`, `saved_drawings/` (49 MB) and `PantographApp/deferred/`;
-  - attach the zip, `install-windows.ps1` and `install-mac.sh`;
-  - the README links to the latest release.
-- [ ] A version number in `pyproject.toml`, shown in the UI.
+**Built and tested 2026-09-21.** Two workflows, both YAML-validated and with
+every step run by hand on Windows first.
+
+`.github/workflows/ci.yml` — on push, PR, or by hand:
+- **test**: `uv sync --locked`, pyflakes, pytest, then the launcher smoke test.
+  Windows only for now; `macos-latest` is one line in the matrix and the
+  macOS smoke-test step is already written for when the Mac launcher exists.
+- **package**: builds the release zip with `git archive`, checks its contents,
+  then installs from it and smoke-tests the installed copy. The content check
+  is there because a missing file breaks only on a user's machine — it
+  requires the vendored AxiDraw API (`uv run --locked` fails without it) and
+  refuses `tests/`, `saved_drawings/` or `.github/` shipping.
+
+`.github/workflows/release.yml` — on a `v*` tag:
+- refuses to build unless the tag matches `pyproject.toml`'s version, so a tag
+  can't ship a build that reports a different number;
+- runs the tests, builds the zip, installs from it and smoke-tests it, then
+  publishes the zip and `install-windows.ps1` with install instructions.
+
+**`--smoke-test`** starts the app for real (dry run, no browser, its own data
+folder and ports) and checks five things: `/health` answers, the page is
+served, `hello` carries what a page needs, a stroke sent over OSC is drawn and
+recorded, and saving writes an SVG that loads back. Exit code 0 or 1, and a
+failure names the check. CI runs it *through the launcher*, so a pass means uv
+fetched Python, resolved the libraries and the app ran — the whole install
+path, not just the code. Verified both ways: it passes on a good tree, and
+reports the right check and exit 1 when one is broken.
+
+The version number already came from `pyproject.toml` and showed in the UI
+(`shell.app_version()`), so that item was done.
+
+**Found while building it:** `pyflakes` was never a dependency, so the lint
+step would have failed on its first run. It's in the dev group now (and the
+lock re-made). It's pointed at the app's own code: `tests/` trips it up,
+because importing a pytest fixture and then taking it as a parameter reads as
+a redefinition. It also caught two genuinely unused imports.
+
+- [ ] **Checkpoint (Marc):** push the workflows, then tag `v0.1.0` and push the
+  tag. Only you can do this. Then run the one-line installer on a Windows
+  account with no Python and confirm it works end to end.
 
 ### Phase 10: Docs and the real-hardware pass
 

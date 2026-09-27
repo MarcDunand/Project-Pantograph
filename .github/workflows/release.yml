@@ -1,0 +1,94 @@
+name: Release
+
+# Push a tag like v0.1.0 and this builds the download and publishes it.
+#   git tag v0.1.0 && git push origin v0.1.0
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (must already exist)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # The tag and pyproject.toml must agree, or the app would report a
+      # version nobody can match to a download.
+      - name: The tag matches the version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "tag=$tag  pyproject=$version"
+          [ "$tag" = "v$version" ] || {
+            echo "Tag '$tag' doesn't match pyproject.toml's '$version'."
+            echo "Set the version in pyproject.toml first, then tag v$version."
+            exit 1
+          }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Install
+        run: uv sync --locked
+
+      - name: Test
+        run: uv run pytest -q
+
+      # export-ignore in .gitattributes keeps tests/, .github/, .claude/,
+      # saved_drawings/ and PantographApp/deferred/ out of this.
+      - name: Build the zip
+        shell: bash
+        run: git archive --format=zip --prefix=pantograph/ -o pantograph-windows.zip HEAD
+
+      - name: Install from the zip and smoke-test it
+        shell: pwsh
+        run: |
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'fakelocal'
+          ./install-windows.ps1 -Source (Resolve-Path ./pantograph-windows.zip) -NoLaunch
+          & (Join-Path $env:LOCALAPPDATA 'Pantograph\app\PantographApp\Pantograph.bat') --smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "the built release failed its smoke test" }
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: Pantograph ${{ env.VERSION }}
+          files: |
+            pantograph-windows.zip
+            install-windows.ps1
+          body: |
+            ## Install on Windows
+
+            Paste this into PowerShell:
+
+            ```powershell
+            powershell -ExecutionPolicy Bypass -c "irm https://github.com/${{ github.repository }}/releases/latest/download/install-windows.ps1 | iex"
+            ```
+
+            Or download `pantograph-windows.zip`, extract it, and run
+            `PantographApp\Pantograph.bat`. **Extract it first** — running the
+            launcher from inside the zip viewer won't work.
+
+            The first launch downloads Python and the libraries (about 150 MB)
+            into its own folder. That happens once; after it Pantograph starts
+            straight away and works offline. Nothing is installed
+            system-wide, and no admin rights are needed.
+
+            Running the installer again updates an existing copy. Your drawings
+            and settings live outside the app folder and are left alone.
+
+            macOS isn't packaged yet — see the README to run it from source.

@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest", "playwright"]
+dev = ["pytest", "playwright", "pyflakes"]
 
 [tool.uv]
 # An application, not a library: nothing to build or install for the project itself.

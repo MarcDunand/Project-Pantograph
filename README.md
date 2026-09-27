@@ -22,10 +22,39 @@ scratch, with or without an AxiDraw.
 
 ---
 
-## Setup
+## Install on Windows
+
+[**Download the latest release**](https://github.com/MarcDunand/Project-Pantograph/releases/latest),
+or paste this into PowerShell, which fetches and installs it in one step:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/MarcDunand/Project-Pantograph/releases/latest/download/install-windows.ps1 | iex"
+```
+
+Either way you end up with Pantograph in your Start menu. The first launch
+downloads Python and the libraries (about 150 MB) into its own folder; that
+happens once, and after it Pantograph starts straight away and works offline.
+Nothing is installed system-wide and no admin rights are needed. Running the
+installer again updates an existing copy, leaving your drawings and settings
+alone.
+
+If you downloaded the zip, **extract it before running the launcher** —
+Windows will happily open a zip as if it were a folder, but the app can't
+install itself in there.
+
+You still need **iDraw OSC** on the iPad (step 5 below), and the AxiDraw's own
+software if you have a plotter (step 6).
+
+**macOS isn't packaged yet.** Follow the Setup section below to run it from
+source; it works, it just isn't a one-click download.
+
+---
+
+## Setup (from source, or on a Mac)
 
 Installs Python, the code, and iDraw OSC, then connects your iPad to this
-program. No prior Python or command-line experience needed.
+program. No prior Python or command-line experience needed. On Windows the
+release download above is easier.
 
 **An AxiDraw is optional.** Without one you still get a live drawing preview
 and can export an SVG to plot later on a machine that has one. The steps

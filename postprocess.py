@@ -81,7 +81,7 @@ machine operations, not part of the drawing.
 
 import math
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # Commands are in inches (see COORDINATES); effects sized in mm convert with this.
 MM_PER_IN = 25.4

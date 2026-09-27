@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows only for the demo. macOS is wanted later: add `macos-latest`
+        # here and the Mac launcher will be exercised the same way.
+        os: [windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --locked
+
+      # The app's own code. Not tests/: pytest's fixture idiom (import a
+      # fixture, then take it as a parameter) reads as a redefinition to
+      # pyflakes, and not .venv/ or vendor/, which aren't ours.
+      - name: Lint
+        shell: bash
+        run: uv run python -m pyflakes *.py PantographApp/*.py
+
+      - name: Test
+        run: uv run pytest -q
+
+      # The launcher, exactly as a user runs it: it fetches its own private uv
+      # and Python, resolves the libraries and starts the app, which then checks
+      # itself and quits. This is what proves a fresh install works — the tests
+      # above only prove the code does.
+      - name: Launcher smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: .\PantographApp\Pantograph.bat --smoke-test
+
+      - name: Launcher smoke test (macOS)
+        if: runner.os == 'macOS'
+        run: ./PantographApp/Pantograph.command --smoke-test
+
+  package:
+    name: Release zip builds and installs
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same command the release uses, so a broken archive is caught on
+      # every push rather than at tag time.
+      - name: Build the zip
+        shell: bash
+        run: git archive --format=zip --prefix=pantograph/ -o pantograph-windows.zip HEAD
+
+      # The AxiDraw API is vendored as local files that `uv run --locked` needs.
+      # Losing them from the archive would break only on a user's machine, so
+      # the check belongs here.
+      - name: The zip carries what the app needs
+        shell: bash
+        run: |
+          set -euo pipefail
+          need="pantograph/listen_to_idraw.py
+          pantograph/pyproject.toml
+          pantograph/uv.lock
+          pantograph/PantographApp/Pantograph.bat
+          pantograph/PantographApp/ui/index.html
+          pantograph/PantographApp/ui/icon.ico
+          pantograph/PantographApp/vendor/axidrawinternal-3.9.6-py2.py3-none-any.whl"
+          list=$(unzip -Z1 pantograph-windows.zip)
+          while read -r f; do
+            [ -z "$f" ] && continue
+            echo "$list" | grep -qx "$f" || { echo "MISSING from the zip: $f"; exit 1; }
+          done <<< "$need"
+          echo "$list" | grep -q "pantograph/PantographApp/vendor/AxiDraw_API_396/" \
+            || { echo "MISSING from the zip: the vendored AxiDraw API"; exit 1; }
+          # export-ignore should have kept the bulky dev-only folders out.
+          for unwanted in pantograph/tests/ pantograph/saved_drawings/ pantograph/.github/; do
+            echo "$list" | grep -q "^$unwanted" && { echo "should not ship: $unwanted"; exit 1; }
+          done
+          echo "zip contents ok ($(echo "$list" | wc -l) files)"
+
+      # Install from that zip the way a person would, then run the installed
+      # copy. Catches anything that only breaks once the app is somewhere else.
+      - name: Install from the zip and smoke-test the installed copy
+        shell: pwsh
+        run: |
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'fakelocal'
+          ./install-windows.ps1 -Source (Resolve-Path ./pantograph-windows.zip) -NoLaunch
+          $launcher = Join-Path $env:LOCALAPPDATA 'Pantograph\app\PantographApp\Pantograph.bat'
+          if (-not (Test-Path $launcher)) { throw "the installer didn't put the launcher where it said" }
+          & $launcher --smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "the installed copy failed its smoke test" }

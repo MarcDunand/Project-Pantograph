@@ -32,6 +32,7 @@ import logging
 import math
 import socket
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -2503,6 +2504,78 @@ def _make_axidraw_safe(ad) -> None:
 # ENTRY POINT
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _smoke_test(paths) -> bool:
+    """
+    Prove a fresh install actually works: the server answers, a page would get
+    its `hello`, a stroke sent over OSC is drawn and recorded, and saving writes
+    a file Pantograph can read back.
+
+    CI runs this through the real launcher, so a pass means uv fetched Python,
+    resolved the libraries, and the app ran — the whole install path, not just
+    the code. Everything here is a real request over the real ports.
+    """
+    import urllib.request
+    from pythonosc.udp_client import SimpleUDPClient
+
+    failures = []
+
+    def check(name, fn):
+        try:
+            fn()
+            log.info("[smoke] %s: ok", name)
+        except Exception as e:                # noqa: BLE001 — report, never raise
+            log.error("[smoke] %s: FAILED — %s", name, e)
+            failures.append(name)
+
+    def health():
+        with urllib.request.urlopen(f"http://127.0.0.1:{preview.port}/health", timeout=10) as r:
+            assert r.status == 200, r.status
+
+    def page():
+        with urllib.request.urlopen(f"http://127.0.0.1:{preview.port}/", timeout=10) as r:
+            body = r.read().decode("utf-8", "replace")
+        assert r.status == 200 and "Pantograph" in body, "the page didn't come back"
+
+    def greeting():
+        msg = _hello()
+        for key in ("paper", "layout", "models", "effect_specs", "plotter_status"):
+            assert key in msg, f"hello is missing {key!r}"
+
+    def draws():
+        c = SimpleUDPClient("127.0.0.1", OSC_PORT)
+        for addr, v in [("/r", 0.0), ("/g", 0.0), ("/b", 0.0), ("/a", 1.0), ("/pen", 1.0),
+                        ("/canvasWidth", 440.0), ("/canvasHeight", 956.0), ("/drawingWidth", 2.0)]:
+            c.send_message(addr, v)
+        for i in range(30):
+            c.send_message("/x", 120.0 + i * 4)
+            c.send_message("/y", 300.0 + i)
+            c.send_message("/pressure", 2.0)
+            time.sleep(0.004)
+        c.send_message("/r", 0.0)             # the next state block ends the stroke
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and _recorder.is_empty():
+            time.sleep(0.05)
+        assert not _recorder.is_empty(), "nothing arrived over OSC"
+
+    def saves():
+        out = paths.drawings / "smoke-test.svg"
+        reply = _save_as({"path": str(out)})
+        assert reply.get("ok"), reply.get("error")
+        rec, vw, vh = recording.load_svg(out)
+        assert rec.get("strokes"), "the saved file has no strokes"
+        assert vw > 0 and vh > 0
+
+    for name, fn in [("health", health), ("page", page), ("hello", greeting),
+                     ("osc stroke", draws), ("save", saves)]:
+        check(name, fn)
+
+    if failures:
+        log.error("[smoke] FAILED: %s", ", ".join(failures))
+    else:
+        log.info("[smoke] all checks passed (Pantograph %s)", APP_VERSION)
+    return not failures
+
+
 def main(argv=None) -> int:
     global _show_raw_osc, DRY_RUN, OSC_PORT, _osc_port_from_cli
 
@@ -2555,7 +2628,17 @@ def main(argv=None) -> int:
     parser.add_argument("--open", metavar="FILE",
                         help="Open this drawing in the UI (it's copied into the drawings "
                              "folder if it isn't there already).")
+    parser.add_argument("--smoke-test", action="store_true",
+                        help="Start up, check the app answers and can draw and save, "
+                             "then quit. Exit code 0 if all of it worked. Used by CI "
+                             "through the real launcher, so the whole install is tested.")
     cli = parser.parse_args(argv)
+
+    # The smoke test drives a real startup: dry run so no USB is needed, no
+    # browser, its own data folder and ports so it can't disturb a real copy.
+    if cli.smoke_test:
+        cli.dry_run = cli.no_browser = True
+        cli.data_dir = cli.data_dir or tempfile.mkdtemp(prefix="pantograph-smoke-")
     _show_raw_osc = cli.raw_osc
     DRY_RUN       = cli.dry_run
     if cli.osc_port:
@@ -2617,6 +2700,11 @@ def main(argv=None) -> int:
             log.error("Couldn't open %s: %s", cli.open, reply.get("error"))
     shell.open_ui(url, enabled=not cli.no_browser)
     log.info("[ui] %s", url)
+
+    if cli.smoke_test:
+        ok = _smoke_test(paths)
+        shutdown()
+        return 0 if ok else 1
 
     try:
         # A timed wait, not a bare wait(): Ctrl+C only interrupts the main
