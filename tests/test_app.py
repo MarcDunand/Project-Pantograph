@@ -366,8 +366,11 @@ def test_page_works_in_a_real_browser(app):
         page.goto(f"http://127.0.0.1:{app.ui_port}")
         page.wait_for_function("document.getElementById('conn-label').textContent === 'live'", timeout=10000)
         send_stroke(app.osc_port, n=30)
-        page.wait_for_function("document.getElementById('stroke-count').textContent === '1'", timeout=5000)
-        assert page.evaluate("document.getElementById('pt-count').textContent") == "30"
+        # Wait for the point count itself. The stroke count reaches 1 on the
+        # stroke's *first* point, so reading pt-count the moment it does races
+        # the other 29 -- which a slow CI runner delivers over time (it read 15).
+        page.wait_for_function("document.getElementById('pt-count').textContent === '30'", timeout=10000)
+        assert page.evaluate("document.getElementById('stroke-count').textContent") == "1"
         page.evaluate("pantograph.newDrawing()")
         page.wait_for_function("document.getElementById('pt-count').textContent === '0'", timeout=5000)
         assert [f for f in os.listdir(app.data_dir) if f.endswith(".svg")]
@@ -436,8 +439,17 @@ def test_the_ipad_goes_quiet_when_idraw_has_been_closed(app, age, label, live):
                                timeout=10000)
         # Through the real message path: this is the broadcast the engine
         # sends twice a second, carrying how long the iPad has been silent.
-        page.evaluate("a => window.pantograph.handle({ type: 'lag', seconds: 0, osc_age: a })", age)
-        assert page.inner_text("#ipad-label") == label
-        dot = page.get_attribute("#ipad-dot", "class")
-        assert ("ok" in dot) == live, dot
+        #
+        # Deliver it and read the result in one synchronous step. The engine is
+        # sending its own copy every 500 ms, saying no iPad has ever been heard
+        # from; with two separate reads, a slow CI runner let one land between
+        # them, so the label said "Receiving" and the dot said otherwise. Page
+        # JavaScript runs one task at a time, so nothing can interleave here.
+        got = page.evaluate("""a => {
+            window.pantograph.handle({ type: 'lag', seconds: 0, osc_age: a });
+            return { label: document.getElementById('ipad-label').textContent,
+                     dot: document.getElementById('ipad-dot').className };
+        }""", age)
+        assert got["label"] == label, got
+        assert ("ok" in got["dot"]) == live, got
         browser.close()
