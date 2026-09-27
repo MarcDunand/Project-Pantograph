@@ -2636,9 +2636,11 @@ def main(argv=None) -> int:
 
     # The smoke test drives a real startup: dry run so no USB is needed, no
     # browser, its own data folder and ports so it can't disturb a real copy.
+    smoke_tmp = None                 # the smoke test's own folder, removed after
     if cli.smoke_test:
         cli.dry_run = cli.no_browser = True
-        cli.data_dir = cli.data_dir or tempfile.mkdtemp(prefix="pantograph-smoke-")
+        if not cli.data_dir:
+            cli.data_dir = smoke_tmp = tempfile.mkdtemp(prefix="pantograph-smoke-")
     _show_raw_osc = cli.raw_osc
     DRY_RUN       = cli.dry_run
     if cli.osc_port:
@@ -2704,6 +2706,12 @@ def main(argv=None) -> int:
     if cli.smoke_test:
         ok = _smoke_test(paths)
         shutdown()
+        if smoke_tmp:
+            # Every run used to leave a folder in the temp directory. The log
+            # file inside it is held open until logging lets go of it.
+            import shutil
+            logging.shutdown()
+            shutil.rmtree(smoke_tmp, ignore_errors=True)
         return 0 if ok else 1
 
     try:

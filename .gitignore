@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+
+# Scratch space for Claude sessions (test output, throwaway scripts), kept
+# inside the project rather than elsewhere on the drive.
+.scratch/

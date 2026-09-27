@@ -73,10 +73,10 @@ jobs:
           body: |
             ## Install on Windows
 
-            Paste this into PowerShell:
+            Paste this into PowerShell (not Command Prompt):
 
             ```powershell
-            powershell -ExecutionPolicy Bypass -c "irm https://github.com/${{ github.repository }}/releases/latest/download/install-windows.ps1 | iex"
+            irm https://github.com/${{ github.repository }}/releases/latest/download/install-windows.ps1 | iex
             ```
 
             Or download `pantograph-windows.zip`, extract it, and run

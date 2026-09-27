@@ -1,6 +1,6 @@
 [project]
 name = "pantograph"
-version = "0.1.0"
+version = "0.1.1"
 description = "Draw on an iPad, plot live on an AxiDraw."
 readme = "README.md"
 license = "MIT"

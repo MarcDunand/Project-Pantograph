@@ -7,10 +7,13 @@ phase ends with a checkpoint, and nothing moves on until that checkpoint passes.
 **Keep this file current as work lands:** tick boxes, record decisions, add
 gotchas.
 
-**Status:** Phases −1 to 7 are done, apart from the checks below.
-Marc's first UI review (2026-09-20) has been worked through — see "UI round 2"
-in Phase 5. **Phase 8 (launchers and installers) is next.** The pressure-lag
-fix is deferred until an Apple Pencil is available (see Phase −1).
+**Status (2026-09-27):** Phases −1 to 9 are done. **v0.1.0 is released** on
+GitHub (published 2026-09-27 04:42 UTC; the release workflow passed). Phase 10
+is under way: the README is rewritten (2026-09-27), and what's left is the
+short machine checklist in §6, starting with Marc running the installed copy
+on his own PC. **The install command in v0.1.0 is stopped by Microsoft
+Defender** (G-57); the fix is in the repo and ships as v0.1.1. The pressure-lag fix is deferred until an Apple Pencil is available
+(see Phase −1). The Mac package waits until there's a Mac to test on.
 
 **Hardware checks.** These can't be verified without the iPad and AxiDraw.
 Marc's session on 2026-09-19 covered the first five:
@@ -999,7 +1002,13 @@ Both installers:
   straight into a shell.
 
 **`install-windows.ps1`:**
-- Run as `powershell -ExecutionPolicy Bypass -c "irm <release URL>/install-windows.ps1 | iex"`.
+- Run as `irm <release URL>/install-windows.ps1 | iex`, typed into PowerShell.
+  **Not** `powershell -ExecutionPolicy Bypass -c "irm … | iex"`, the form
+  first shipped: Microsoft Defender kills that as a trojan (G-57).
+- It runs inside the person's own session, so its body is wrapped in `& { }`
+  (its variables, StrictMode and `$ErrorActionPreference` don't linger) and
+  errors `throw` rather than `exit`, which would close their window with the
+  message in it.
 - Installs to `%LOCALAPPDATA%\Pantograph\app\`, with Start-menu and Desktop
   shortcuts to `PantographApp\Pantograph.bat`.
 - This is the `irm | iex` pattern that launcher step 3 avoids. That's fine
@@ -1046,8 +1055,19 @@ a dependency.
 
 - [ ] **Checkpoint (Marc):** on a Windows account with no Python or uv, the
   one-line installer and the click download both work end to end, and the
-  second launch works offline. Needs a real release published first (Phase 9),
-  since the installer's default URL points at `releases/latest`.
+  second launch works offline. Now §6 item 1, which Marc is running on his own
+  PC (no second machine for now).
+  - **2026-09-27, Marc's own PC: the one-line command failed, every time.**
+    It printed `iex : The terminator '#>' is missing from the multiline
+    comment`, and Windows Security showed **"Trojan:Win32/Commando.A!ml"
+    (Severe)**. Microsoft Defender flags the *command line*
+    `powershell.exe -ExecutionPolicy Bypass -c irm … | iex` (a new process
+    fetching and running a script, the shape malware uses) and kills it
+    mid-run, so `iex` got half the script. Nothing to do with the firewall,
+    and nothing was installed. My own reruns that day passed only because
+    their command lines were shaped differently. Fixed by changing the
+    command (G-57); needs a new release, since the installer is a release
+    asset.
 - [x] `install-windows.ps1` points at `MarcDunand/Project-Pantograph` (done
   2026-09-21, taken from the repo's own remote).
 
@@ -1090,13 +1110,45 @@ lock re-made). It's pointed at the app's own code: `tests/` trips it up,
 because importing a pytest fixture and then taking it as a parameter reads as
 a redefinition. It also caught two genuinely unused imports.
 
-- [ ] **Checkpoint (Marc):** push the workflows, then tag `v0.1.0` and push the
-  tag. Only you can do this. Then run the one-line installer on a Windows
-  account with no Python and confirm it works end to end.
+**Found on GitHub's runner (2026-09-26):** the first CI run failed three
+browser tests that always passed locally, all on timing assumptions a slower
+machine breaks, not app bugs (G-56). Both races were reproduced locally before
+the fix: the "30 points drawn" check read the point counter the moment the
+*stroke* counter ticked, which happens on the first point, and the iPad-status
+check read the label and the dot in two steps, with the engine's own
+half-second status broadcast free to land in between. The tests now wait for
+the value itself, and read in one step.
+
+- [x] **Checkpoint (Marc):** push the workflows, tag `v0.1.0` and push the tag.
+  Done 2026-09-27: CI green, the release workflow passed, and the release has
+  `pantograph-windows.zip` and `install-windows.ps1` attached. The clean-PC
+  install is §6 item 1.
 
 ### Phase 10: Docs and the real-hardware pass
 
-- [ ] README setup rewritten so the **primary and alternative routes sit
+**Docs done 2026-09-27.** The README now opens with **Get started** (install,
+iDraw, connect, plotter, draw), then **Using Pantograph**, **Troubleshooting**,
+**Running from source** (with **Developers** inside it), and the technical
+reference unchanged below. Where it differs from the plan below:
+- The two install routes sit one under the other at the top of step 1, not in
+  a table. With no Mac package the table would have one row, and a code block
+  gives the long command GitHub's copy button, which a table cell doesn't.
+- The security prompts are described in a collapsed `<details>`, without
+  screenshots. Add them if people turn out to get stuck there.
+- Running from source uses `uv run listen_to_idraw.py` rather than installing
+  Python and pip packages by hand: uv fetches Python 3.12 and the locked
+  versions itself, which is fewer steps for a Mac user and the same thing CI
+  tests. The pip route is kept for developers, and was checked on 2026-09-27
+  in a fresh Python 3.12 venv: it installs and passes `--smoke-test`.
+- Stale text fixed along the way: the top bar's old "iDraw →" address and Copy
+  button, the missing *Quiet* status, the "AxiDraw software" step (the API is
+  vendored, so there's nothing to install), the Tools tab, "Open file…",
+  `REPLAY_MAX_GAP_SEC` and `library.py`, which no longer exist, and paper
+  "clamped" to the machine.
+
+The original plan, for reference:
+
+- [x] README setup rewritten so the **primary and alternative routes sit
       side by side**. Anyone who doesn't like the command line sees the
       click-download route immediately, not further down the page. One
       table, one row per OS:
@@ -1113,13 +1165,14 @@ a redefinition. It also caught two genuinely unused imports.
   - A `|` inside a table cell must be escaped as `\|`. GitHub renders inline
     code in table cells, and long commands wrap.
   - Then: enter the IP and port shown in the app into iDraw.
-- [ ] README Troubleshooting: **networks that isolate devices** (school, work,
+- [x] README Troubleshooting: **networks that isolate devices** (school, work,
       hotel and guest Wi-Fi), with a hotspot to test and Tailscale to fix;
       Windows Public networks; firewall.
-- [ ] A "Developers" section: `uv run listen_to_idraw.py` and
+- [x] A "Developers" section: `uv run listen_to_idraw.py` and
       `uv run pytest`, plus the plain `pip install` route (including
       `pip install PantographApp/vendor/axidrawinternal-3.9.6-py2.py3-none-any.whl PantographApp/vendor/AxiDraw_API_396`).
-- [ ] Run the §6 test list.
+- [ ] Run the §6 test list (cut down 2026-09-27 to what only a machine can
+      show).
 - [ ] Add a note to `MEETINGS.html` if relevant.
 
 ---
@@ -1161,23 +1214,50 @@ For the release notes:
 
 ## 6. Test list (before the first release)
 
-On Windows 11 and one Mac:
-- [ ] Fresh machine or account: **both** install routes work.
-- [ ] iPad draws → preview → reload the tab → nothing lost; autosave is in the
-      drawings list.
-- [ ] With the AxiDraw: live plot, pen tests, Home, replay, effects; fast
-      strokes stay continuous.
-- [ ] Unplug the AxiDraw mid-plot → error → Connect works again.
-- [ ] Close the console or Terminal mid-plot → the pen lifts.
-- [ ] Launch twice → the second launch opens the first.
-- [ ] Firewall: Allow works; the Troubleshoot steps fix a Cancel.
-- [ ] Paper/model change → the mapping is correct; refused mid-plot.
-- [ ] Old SVGs (including `iDraw_to_svg` ones) load, transform, heal and
-      replay.
-- [ ] Second launch with no internet.
-- [ ] Re-running an installer updates the app and keeps settings and drawings.
-- [ ] The UI works in Chrome/Edge and Safari. (Automated: Edge and WebKit
-      pass. Real Safari is left for the Mac session.)
+**Cut down 2026-09-27.** Most of the original list was covered by the
+machine sessions of 09-19 to 09-21 or is pinned by automated tests, so what's
+left is only what a real machine can show *about the released app*. Every
+earlier hardware session ran from the development checkout; the installed copy
+runs its own Python from `%LOCALAPPDATA%\Pantograph\runtime`, a different
+`python.exe` that Windows' firewall has never seen.
+
+**Still to do (Windows):**
+- [ ] **The install, on Marc's PC** (no second machine for now, so not a
+      truly fresh one). The one-line installer works end to end,
+      Pantograph opens in the browser, and a second launch works with Wi-Fi
+      off. If they're willing, the download route too (the security prompt is
+      the thing to watch). *If it fails:* the console's message and
+      `%LOCALAPPDATA%\Pantograph\Logs\pantograph.log` say why.
+- [ ] **The installed copy on Marc's PC, with the iPad and the AxiDraw.** Start
+      it from the Start menu, not the dev checkout. Windows asks about the
+      firewall for the new `python.exe` → **Allow** → iPad strokes arrive →
+      the AxiDraw plots them. Then close the console window mid-stroke: the pen
+      lifts and the motors release. (Console-close was verified on 09-20, but
+      with Python owning the console; now `cmd` running the `.bat` owns it.)
+
+**Already covered:**
+- Reload the tab → nothing lost; autosave: automated
+  (`test_reloading_the_page_keeps_the_drawing…`,
+  `test_autosave_then_new_drawing…`).
+- Live plot, pen tests, Home, effects, fast strokes continuous: machine
+  sessions 09-19 to 09-21.
+- Unplug the AxiDraw mid-plot → an error, and the app keeps running: machine,
+  09-19.
+- Close the console mid-plot → pen lifts, motors release: machine, 09-20
+  (re-check through the launcher above).
+- Launch twice → the second defers to the first: automated
+  (`test_second_launch_defers_to_the_first`).
+- Paper/model change → mapping correct (rulers and layout on the machine,
+  09-20/21); refused mid-plot: automated (`test_paper_change_refused_mid_plot`).
+- Old SVGs, including `iDraw_to_svg` ones, load; heal and transform reproduce
+  committed output: automated (`tests/test_recordings.py`).
+- Re-running the installer updates the app and keeps settings, drawings and
+  the runtime: checked by hand in Phase 8, and CI installs from the zip on
+  every push.
+- The UI in Edge and WebKit: automated.
+
+**Waits for the Mac session:** both Mac install routes (once they exist), the
+UI in real Safari, and macOS's Local Network prompt (G-24).
 
 ---
 
@@ -1300,6 +1380,8 @@ The known risks, each with its mitigation and phase. Re-check before release.
 | G-53 | `--help` crashed on a fresh Windows console: the text contains `→`, and the UTF-8 stream reconfigure lived in `setup_logging`, which runs long after argparse has printed and exited | `shell.use_utf8_console()`, called first thing in `main()`. `tests/test_app.py` runs the real program under `PYTHONIOENCODING=cp1252` | 8 |
 | G-54 | Labels and values in the top bar sat a pixel or two off each other | The row centred each flex item's *box*, and 14px sans labels and 13px mono values have different line-box heights. `align-items: baseline` aligns the text instead of the boxes | 5 |
 | G-55 | A negative margin pulled the bottom ruler across the canvas margin but did nothing for the side one | Its grid column was sized by the unit button, and a grid item sits at its column's start, so there was nothing to pull against. `justify-self: end` anchors it to the column's end first | 5 |
+| G-56 | Tests that pass locally fail on GitHub's slower runner: a check read one counter the moment another ticked, or read two things in two steps while a live broadcast could land between them | Wait for the exact value being asserted, not a proxy for it; read related DOM state in one `page.evaluate`. Page JavaScript runs one task at a time, so nothing interleaves inside a single call | 9 |
+| G-57 | Microsoft Defender kills `powershell -ExecutionPolicy Bypass -c "irm <url> \| iex"` as **Trojan:Win32/Commando.A!ml** (Severe), the documented install command (Marc, 2026-09-27). It's a machine-learning verdict on the process command line; AMSI, the script scanner, rates the same text and the installer clean | The command is now `irm <url> \| iex` typed into PowerShell: no new process, so no command line to judge. The script scanner rates it clean (checked with `AmsiScanString`), and it installs under the default *Restricted* execution policy, which only covers script files. The installer runs in a child scope and throws instead of exiting, since it now runs in the person's own session | 8 |
 
 (Resolved and removed: G-25 Windows on ARM, not handled by decision; G-27
 update notices, cut; G-28 OSC threading, done; G-32 lxml builds, covered by
@@ -1351,9 +1433,10 @@ No questions are open. Recorded answers, all folded into §1:
 
 The problems that can't be engineered away. Keep them in view.
 
-1. **No Mac on hand.** CI proves the Mac install. The iPad → Mac → AxiDraw
-   flow and macOS prompts (G-24) need **one real-Mac session before
-   release**.
+1. **No Mac on hand.** v0.1.0 shipped Windows-only (decided 2026-09-21);
+   Mac users run from source. Before a Mac package ships, CI needs
+   `macos-latest` in its matrix and the launcher, and the iPad → Mac →
+   AxiDraw flow and macOS prompts (G-24) need **one real-Mac session**.
 2. **Click-route security prompts.** Users who skip the command line face
    Windows' "Run anyway" and, on Mac, the 4-step "Open Anyway" process. Some
    will give up. The README puts the prompt-free command route beside it. The

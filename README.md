@@ -17,262 +17,109 @@ Points are streamed to the plotter as they arrive — the pen starts moving
 mid-stroke rather than waiting for the stroke to finish. When the plotter falls
 behind, an optimizer thins the pending queue so it can catch up.
 
-New here? **[Setup](#setup)** below walks through getting this running from
-scratch, with or without an AxiDraw.
+**An AxiDraw is optional.** Without one you still get the live preview, and the
+drawing is saved as an SVG you can plot later on a machine that has one.
 
 ---
 
-## Install on Windows
+## Get started
 
-[**Download the latest release**](https://github.com/MarcDunand/Project-Pantograph/releases/latest),
-or paste this into PowerShell, which fetches and installs it in one step:
+You need a Windows computer, an iPad (or iPhone) on the same Wi-Fi, and
+optionally an [AxiDraw](https://axidraw.com). On a Mac, see
+[Running from source](#running-from-source) — the app works there, it just
+isn't a one-click download yet.
+
+### 1. Install Pantograph
+
+Two ways, same result. Pick whichever you're more comfortable with.
+
+**Recommended: paste one command.** Open PowerShell (press Start, type
+`PowerShell`, press Enter; not Command Prompt), paste this line, and press
+Enter:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/MarcDunand/Project-Pantograph/releases/latest/download/install-windows.ps1 | iex"
+irm https://github.com/MarcDunand/Project-Pantograph/releases/latest/download/install-windows.ps1 | iex
 ```
 
-Either way you end up with Pantograph in your Start menu. The first launch
-downloads Python and the libraries (about 150 MB) into its own folder; that
-happens once, and after it Pantograph starts straight away and works offline.
-Nothing is installed system-wide and no admin rights are needed. Running the
-installer again updates an existing copy, leaving your drawings and settings
-alone.
+It installs Pantograph, puts it in your Start menu and on your Desktop, and
+starts it.
 
-If you downloaded the zip, **extract it before running the launcher** —
-Windows will happily open a zip as if it were a folder, but the app can't
-install itself in there.
+**Or: download and double-click.**
+[Download `pantograph-windows.zip`](https://github.com/MarcDunand/Project-Pantograph/releases/latest)
+→ right-click it → **Extract All** → **Extract** → open the `pantograph`
+folder, then `PantographApp` → double-click **`Pantograph.bat`**. Keep the
+extracted folder somewhere permanent: that folder *is* the app, and there's no
+Start-menu entry on this route.
 
-You still need **iDraw OSC** on the iPad (step 5 below), and the AxiDraw's own
-software if you have a plotter (step 6).
+<details>
+<summary>Windows warns about the file on the download route</summary>
 
-**macOS isn't packaged yet.** Follow the Setup section below to run it from
-source; it works, it just isn't a one-click download.
+Windows is cautious with files downloaded in a browser, and Pantograph isn't
+signed by a registered publisher. You may see **"Windows protected your PC"**:
+click **More info**, then **Run anyway**. Or **"The publisher could not be
+verified"**: click **Run**. It only asks once. (The command route doesn't get
+this prompt, because PowerShell's download isn't marked as coming from the
+internet.)
+
+</details>
+
+**What the first launch looks like.** A small black console window opens —
+that window *is* Pantograph running, and closing it quits Pantograph. The
+first time, it downloads Python and the libraries it needs (about 150 MB) into
+its own folder, which takes a minute or two. After that it starts straight
+away, even with no internet. Then a browser tab opens at
+`http://127.0.0.1:5810`: that's the app.
+
+Nothing is installed system-wide and no admin rights are needed. To update,
+run the command again; your drawings and settings are kept. Drawings are saved
+in `Documents\Pantograph`.
+
+**Windows may ask whether Python can use the network. Choose Allow.** That's
+how the iPad's strokes get in. If you cancelled it, see
+[Troubleshooting](#nothing-arrives-from-the-ipad).
+
+### 2. Get iDraw OSC on the iPad
+
+On the iPad, open the **App Store**, search **"iDraw OSC"**, and install it.
+It streams your Apple Pencil strokes over Wi-Fi.
+
+### 3. Connect the iPad
+
+Pantograph's top bar shows **IP:** and **Port:**. In iDraw OSC on the iPad,
+set the IP and port to exactly those. The iPad and the computer must be on the
+same Wi-Fi network.
+
+Draw a line on the iPad. When the **iPad** button in the top bar turns green
+and says *Receiving*, it's working. If it stays on *Waiting*, see
+[Troubleshooting](#nothing-arrives-from-the-ipad).
+
+### 4. Plug in the AxiDraw (optional)
+
+Connect it over USB **and** switch on its own power supply (USB alone doesn't
+power the motors). There is no AxiDraw software to install: Pantograph carries
+what it needs. The **Plotter** button in the top bar turns green when it's
+connected; if it doesn't, press it and choose **Connect**.
+
+No AxiDraw? Skip this. Everything else works, and File → **Save as…** gives
+you an SVG to plot later.
+
+### 5. Draw
+
+Strokes appear on the paper in the browser as you draw, and the AxiDraw starts
+moving along with you.
 
 ---
 
-## Setup (from source, or on a Mac)
-
-Installs Python, the code, and iDraw OSC, then connects your iPad to this
-program. No prior Python or command-line experience needed. On Windows the
-release download above is easier.
-
-**An AxiDraw is optional.** Without one you still get a live drawing preview
-and can export an SVG to plot later on a machine that has one. The steps
-below are the same either way except where marked — look for **With an
-AxiDraw:** / **No AxiDraw:** notes at those points. If the connection itself
-doesn't work, see **Troubleshooting the connection** in step 8 — that part
-is identical regardless of AxiDraw.
-
-### What you'll need
-
-- A computer (Windows or Mac) to run this program.
-- An iPad (or iPhone) with Apple Pencil support, for the iDraw OSC app.
-- Both devices on the same Wi-Fi network — or see Tailscale below if that's
-  not possible (dorm/campus/shared networks often block it).
-- Optionally, an [AxiDraw](https://axidraw.com) pen plotter. No AxiDraw yet?
-  You can still draw, preview live, and export a plottable SVG to plot later
-  on a machine that has one — this guide covers both, look for the **With an
-  AxiDraw:** / **No AxiDraw:** notes below.
-
-### Terminal basics (read this first if you're new to this)
-
-A few steps below say to "open a terminal" and "run" a command. If you've
-never done that:
-
-- A **terminal** is a plain text window where you type commands instead of
-  clicking buttons. On Mac it's called **Terminal**. On Windows 11 it's also
-  called **Terminal**; on Windows 10, open **PowerShell** instead — same
-  idea, older window.
-- **"Terminal" vs "PowerShell" on Windows** — worth 20 seconds, because it
-  confuses nearly everyone. They're two layers, not two choices. *Terminal*
-  is the window: the tabs, the `+` button, and nothing else. *PowerShell* is
-  the program running inside it that actually reads your commands. So when
-  you open Terminal and the first line reads `Windows PowerShell`, nothing
-  has gone wrong — that's just Terminal saying which one it started. Leave
-  it on the default and every command in this guide works.
-- To **run** a command: type it exactly as shown, or copy it and paste with
-  **Ctrl+V** (Windows) / **Cmd+V** (Mac), then press **Enter**. Nothing
-  happens until you press Enter.
-- A terminal is always "in" one folder, and commands only see the files in
-  that folder — e.g. `python listen_to_idraw.py` only works if the terminal
-  is inside this project's folder. Step 3 below covers getting there.
-- `cd` means "change directory" — it moves the terminal into a folder. For
-  example, `cd Desktop` moves into a folder named "Desktop". You'll use this
-  in Step 3.
-- To see what's in the current folder (useful for double-checking you're in
-  the right place): run `ls`. This works on both Mac and Windows. (On
-  Windows, `dir` does the same thing if you've seen that one before.)
-
-That's everything you need to follow the rest of this guide.
-
-### 1. Get the code
-
-- **Download ZIP (easiest)** — go to
-  [github.com/MarcDunand/Project-Pantograph](https://github.com/MarcDunand/Project-Pantograph),
-  click the green **Code** button → **Download ZIP**. It saves to your
-  **Downloads** folder by default. Extract it:
-  - **Windows**: right-click the downloaded file → **Extract All** →
-    **Extract**.
-  - **Mac**: double-click the downloaded file — it extracts next to itself.
-  
-  Then move the extracted folder somewhere you'll remember, e.g. your
-  Desktop.
-- **git clone**, if you already use git — open a terminal, `cd` to wherever
-  you want the folder created (e.g. `cd Desktop`), and run:
-  ```
-  git clone https://github.com/MarcDunand/Project-Pantograph.git
-  ```
-
-### 2. Install Python
-
-Skip this if you already have Python 3.10 or newer — check first:
-
-- **Windows**: open a terminal (click Start, type "Terminal", press Enter —
-  on Windows 10, type "PowerShell" instead) and run `python --version`
-- **Mac**: open Terminal (press Cmd+Space, type "Terminal", press Enter) and
-  run `python3 --version`
-
-If that prints 3.10 or higher, move on. Otherwise install it from
-[python.org/downloads](https://www.python.org/downloads/) — download and run
-the installer. **On Windows, tick "Add python.exe to PATH"** on the
-installer's first screen — it's easy to miss and everything below depends on
-it.
-
-After installing, close and reopen the terminal before continuing — it needs
-a fresh window to pick up the new install.
-
-**Mac note for the rest of this guide**: Python's commands on Mac are
-`python3` and `pip3`, not `python`/`pip`. Wherever a command below starts
-with `python` or `pip`, type `python3` / `pip3` instead.
-
-### 3. Open a terminal in the project folder
-
-- **Windows**: open the extracted/cloned folder in File Explorer, click once
-  in the empty area of the address bar at the top, type `powershell`, and
-  press Enter. This opens a terminal already "in" that folder — nothing more
-  to do. (Type `powershell` here, not `terminal`: this box takes a program
-  name, and there is no program actually named "terminal".)
-  If you instead opened a terminal from the Start menu, it starts in your
-  home folder and you'll need to walk to the project yourself: run `ls` to
-  list the folders you can reach from where you are, then `cd [folder name]`
-  to move into one. Repeat until you're in the `Project-Pantograph` folder.
-- **Mac**: open Terminal, type `cd ` (note the trailing space, don't press
-  Enter yet), then drag the project folder from Finder into the Terminal
-  window — it fills in the folder's path — and press Enter.
-- If you used `git clone` in Step 1, you already have a terminal open, one
-  level above the new folder — just run `cd Project-Pantograph` in it
-  instead of the above.
-
-**Check it worked**: run `ls` — you should see `listen_to_idraw.py` in the
-list it prints. If you don't, you're in the wrong folder — repeat the steps
-above.
-
-Run every command below from this same terminal window, in this folder.
-
-### 4. Install the libraries
-
-Run:
-
-```
-pip install python-osc websockets rdp numpy
-```
-
-This covers everything below.
-
-**With an AxiDraw:** also install `pyaxidraw`, by following
-[axidraw.com/doc/py_api](https://axidraw.com/doc/py_api/). That page is the
-authoritative source and changes with AxiDraw's own software, so it isn't
-duplicated here.
-**No AxiDraw:** nothing else to install.
-
-### 5. Install iDraw OSC on your iPad
-
-On the iPad, open the **App Store**, search **"iDraw OSC"**, and install it
-— this is the app that streams your Apple Pencil strokes to the computer.
-
-### 6. Connect the AxiDraw (skip if you don't have one)
-
-**With an AxiDraw:** connect it over USB; make sure its software is set up
-per [axidraw.com/doc/py_api](https://axidraw.com/doc/py_api/).
-**No AxiDraw:** nothing to do here — skip to the next step.
-
-### 7. Run it
-
-First, make sure that your terminal is in the correct folder. If you aren't,
-refer to step 3 for how to get there.
-
-In the terminal, run:
-```
-python listen_to_idraw.py
-```
-The same program works with or without an AxiDraw: it looks for one on USB,
-and without one it's a live preview that records your drawing.
-
-Either way, a browser tab opens automatically at http://127.0.0.1:5810 —
-that's Pantograph. Until the iPad sends anything, it shows the iDraw setup
-steps with this computer's IP and port.
-
-### 8. Connect iDraw OSC to it
-
-On the iPad, open iDraw OSC and set:
-- **IP** → your computer's Wi-Fi IP address. Pantograph shows it in its top
-  bar (**iDraw → 192.168.…**) with a Copy button.
-- **Port** → `8800`
-
-This step, and its troubleshooting below, are identical whether or not you
-have an AxiDraw.
-
-#### Troubleshooting the connection
-
-The **iPad** button in Pantograph's top bar shows whether anything is
-arriving (*Waiting*, *Receiving*, *Idle*, or *Problem*), and its
-**Troubleshoot** list walks through the checks below with your real IP and
-port filled in. **Copy diagnostics** there copies a summary to paste into a
-message if you need help.
-
-- Confirm both devices are on the **same Wi-Fi network** — not one on Wi-Fi
-  and the other on cellular data or a different network.
-- Double check the IP — it can change whenever a device reconnects to Wi-Fi,
-  so re-check it if it's been a while since you last looked.
-- The iPad button turns green only when something has actually arrived from
-  the iPad. ("live", top right, only means the browser is talking to the
-  program on your own computer.)
-- In the terminal, run the same program from step 7 with `--raw-osc` added
-  (e.g. `python listen_to_idraw.py --raw-osc`) and draw a stroke:
-  - **Nothing prints** → no data is reaching the computer — a network
-    problem, see below.
-  - **`/x /y /pressure` messages print but nothing draws** → the connection
-    is fine, the bug is elsewhere.
-- **On a dorm, campus, or other shared/managed network**: these often block
-  devices from reaching each other directly, even on the same Wi-Fi. This is
-  the most common cause of "nothing shows up." If the checks above don't fix
-  it, use **Tailscale**:
-  1. Install Tailscale on the computer from
-     [tailscale.com/download](https://tailscale.com/download), and on the
-     iPad from the App Store.
-  2. Sign in with the **same account** on both.
-  3. On the computer, find its Tailscale IP: in the terminal, run
-     `tailscale ip -4` (prints something like `100.x.y.z`).
-  4. In iDraw OSC, use that address instead of the Wi-Fi IP. Port stays
-     `8800`.
-  5. Works on any network — dorm, coffee shop, home — since the two devices
-     no longer need to reach each other directly.
-
-### 9. Draw
-
-**With an AxiDraw:** strokes appear in the browser preview and the AxiDraw
-starts moving as you draw.
-**No AxiDraw:** strokes appear in the browser preview only — nothing plots
-yet. See step 10 for what to do with the drawing.
-
-### 10. Using Pantograph
+## Using Pantograph
 
 - **Top bar:** the **iPad** and **Plotter** buttons show each connection's
   state; click one to connect, restart the listener, or open a
-  **Troubleshoot** checklist.
+  **Troubleshoot** checklist. **Plotter behind** is how many seconds of
+  drawing the machine still has to catch up on. **Quit** lifts the pen, turns
+  the motors off and saves the drawing.
 - **Menu bar:** **File** (New canvas, Import to canvas…, Save as…, Discard
   canvas) and **Preferences** (Plotter preferences…, Edit layout…, Heal
-  dots). **Quit** lifts the pen, turns the motors off and saves the drawing.
+  dots).
 - **The paper** in the middle is the canvas, at the paper size set in the
   plotter controller, with rulers in inches or millimetres (click the unit to
   switch). Two faint rectangles show where things sit on it: the drawing
@@ -283,8 +130,14 @@ yet. See step 10 for what to do with the drawing.
   drawing alone**. The pen's path is the machine's record of one run, and
   effects are re-applied live from whatever is switched on, so neither is
   something you drew and neither is written to a file.
-- **The sidebar** has two tabs: **Plotter controller** (the machine's controls,
-  model and paper, pen positions) and **Effects**.
+- **The sidebar** has two tabs. **Plotter controller**: Walk Home, Set Home
+  and Disengage XY Motors; the AxiDraw model and paper size; and the three pen
+  positions, each with a Test button. **Effects**: postprocessing effects like
+  zigzag or hatching, each with an **i** button that explains it (see
+  [Post-processing effects](#post-processing-effects)).
+- **Preferences → Plotter preferences…**: speed and acceleration, pressure
+  updates, table tilt, and how hard to simplify lines when the plotter falls
+  behind.
 - **Preferences → Edit layout…** is where those rectangles move. Drag either
   one, use its ring to turn it, and the drawing's corner to resize it. Set the
   AxiDraw's rectangle to where the machine really sits on the sheet, and the
@@ -293,38 +146,202 @@ yet. See step 10 for what to do with the drawing.
   as…** writes an SVG wherever you choose. **Discard canvas** empties it
   without saving. The canvas is also autosaved while you draw and saved when
   you quit, so reloading or closing the browser tab loses nothing.
-- **Plotter controller** (right): Walk Home, Set Home and Disengage XY
-  Motors; the AxiDraw model and paper size; and the three pen positions, each
-  with a Test button.
-- **Plotter preferences…**: speed and acceleration, pressure updates, table
-  tilt, and how hard to simplify lines when the plotter falls behind.
-- **Effects**: postprocessing effects like zigzag or hatching. See
-  [Post-processing effects](#post-processing-effects).
 - **File → Import to canvas…** shows a saved drawing in a preview. **Import to
   canvas** plots it and adds it to the canvas, as if you had drawn it yourself
   — you can keep drawing on the iPad meanwhile, and your strokes plot after it.
   While it plots, a progress bar with **Pause** and **Cancel** appears in the
   sidebar.
-- **Ctrl+C** in the terminal (or closing its window) also lifts the pen and
-  releases the motors, so the carriage can be pushed home by hand.
+- **Closing the console window** (or Ctrl+C in it) also lifts the pen and
+  releases the motors, so the carriage can be pushed home by hand. Closing
+  only the browser tab leaves Pantograph running; open `http://127.0.0.1:5810`
+  to get it back.
 
 **No AxiDraw?** Everything works except the moving plotter: the drawing is
 recorded and saved just the same. Copy the SVG to a computer with an AxiDraw
 and import it there (File → Import to canvas…), with whatever paper, effects
 and settings you choose at that time.
 
-### Other programs, and going deeper
+---
 
-That's setup. The rest of this README is technical
-reference:
+## Troubleshooting
 
-- **[Files](#files)** — what every file in the repo does
-- **[Pipeline](#pipeline)** — how coordinates, strokes, and the plot queue
-  actually work
-- **[Post-processing effects](#post-processing-effects)** — the effects
-  panel in depth, and how to write your own
-- **[Offline tools](#offline-tools)** — the Tools tab's transforms, and
-  `dot_healer.py` from the command line
+### Nothing arrives from the iPad
+
+The **iPad** button says what Pantograph has heard:
+
+| Status | Meaning |
+|---|---|
+| *Waiting* | Nothing has arrived since Pantograph started. |
+| *Receiving* | Points are arriving now. |
+| *Idle* | The iPad sent something in the last two minutes. |
+| *Quiet* | Nothing for two minutes. iDraw may have been closed. |
+| *Problem* | Pantograph can't listen, usually because the port is busy. |
+
+Click it and press **Troubleshoot** for this checklist with your own IP and
+port filled in. In order:
+
+1. **The IP and port in iDraw match the top bar.** The IP can change when
+   either device reconnects to Wi-Fi, so re-check it after a break.
+2. **Same Wi-Fi network**, and not one device on cellular data or a guest
+   network.
+3. **Windows: the network is Private, not Public.** Windows blocks incoming
+   connections on Public networks even after you allowed Python. Settings →
+   Network & internet → Wi-Fi → your network → Network profile type →
+   **Private**.
+4. **The firewall allows Python.** If you pressed Cancel on the firewall
+   question: Start → type `Allow an app through Windows Firewall` → **Change
+   settings** → find **python.exe** and tick **Private**. (No python.exe in
+   the list? Quit Pantograph, start it again, and choose **Allow** this time.)
+5. **Nothing else is using the port.** If the status says the port is busy,
+   pick another in the iPad panel and set the same one in iDraw.
+6. **The network may stop devices reaching each other** — see below.
+7. Press **Restart listener**, then draw a stroke.
+
+#### School, work, hotel and guest networks
+
+Many managed networks stop devices on them from talking to each other ("client
+isolation"), even on the same Wi-Fi. It's the most common reason nothing
+shows up, and nothing on the computer can change it.
+
+- **To test:** turn on a phone's hotspot and put *both* the computer and the
+  iPad on it. If Pantograph receives there, the original network was the
+  problem.
+- **To fix it** on any network, use **Tailscale**, which connects the two
+  devices directly:
+  1. Install Tailscale on the computer from
+     [tailscale.com/download](https://tailscale.com/download), and on the
+     iPad from the App Store.
+  2. Sign in with the **same account** on both.
+  3. In Pantograph, click the **iPad** button: the address list shows a
+     Tailscale address (it starts with `100.`).
+  4. Put that address in iDraw instead of the Wi-Fi one. The port stays the
+     same.
+
+#### Still nothing?
+
+See what's actually reaching the computer. Quit Pantograph, then in
+PowerShell run:
+
+```powershell
+& "$env:LOCALAPPDATA\Pantograph\app\PantographApp\Pantograph.bat" --raw-osc
+```
+
+and draw a stroke. **Nothing prints** → nothing reaches the computer, so it's
+the network (above). **`/x /y /pressure` lines print but nothing draws** → the
+connection is fine and something else is wrong; send the diagnostics (below).
+
+### The install doesn't work
+
+- **"Extract the zip first"**: the launcher was started from inside the zip.
+  Right-click the zip → **Extract All**, then run it from the extracted
+  folder.
+- **Windows Security reports "Trojan:Win32/Commando.A!ml"**: that's Microsoft
+  Defender reacting to an older form of the install command,
+  `powershell -ExecutionPolicy Bypass -c "irm … | iex"` — the shape malware
+  uses to fetch scripts, so Defender stops it on sight. Nothing was installed
+  and nothing is infected. Use the command above, pasted into PowerShell, or
+  the download route.
+- **The one-line command fails**: run it again. A school or work computer may
+  block it outright; the download route usually still works there.
+- **The first launch fails**: it needs internet once to fetch Python. The
+  window stays open with the reason and the location of the log.
+- **"Couldn't replace the previous version"** when updating: Pantograph is
+  still running. Quit it (close its console window) and run the command again.
+
+### The plotter doesn't connect
+
+Click the **Plotter** button → **Troubleshoot**. Usually: the AxiDraw's power
+supply is off, the USB cable is charge-only, or another program (Inkscape's
+AxiDraw extension, a second Pantograph) has hold of it.
+
+### Asking for help
+
+**Copy diagnostics** in either Troubleshoot list copies a summary to paste
+into a message. The log is at `%LOCALAPPDATA%\Pantograph\Logs\pantograph.log`.
+
+---
+
+## Running from source
+
+For a Mac, or to change the code. It uses [uv](https://docs.astral.sh/uv/),
+which fetches the right Python and the exact library versions by itself, so
+you don't install Python separately. (The Mac route works, but hasn't yet been
+through a real-Mac test session in this version; see the build guide.)
+
+**New to the terminal?** A terminal is a window where you type commands. On a
+Mac it's **Terminal** (Cmd+Space, type `Terminal`, Enter); on Windows,
+**PowerShell**. To run a command, paste it and press **Enter**.
+
+1. **Get the code.** On
+   [the project page](https://github.com/MarcDunand/Project-Pantograph), click
+   the green **Code** button → **Download ZIP**, and extract it (Mac:
+   double-click it; Windows: right-click → Extract All). Or, if you use git:
+   `git clone https://github.com/MarcDunand/Project-Pantograph.git`.
+2. **Install uv** (once):
+   - Mac: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+   - Windows: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+
+   Then close the terminal and open a new one.
+3. **Open a terminal in the project folder.** Mac: type `cd ` (with the
+   space), drag the project folder from Finder onto the Terminal window, and
+   press Enter. Windows: open the folder in File Explorer, click the address
+   bar, type `powershell`, and press Enter. Check with `ls`: you should see
+   `listen_to_idraw.py` in the list.
+4. **Run it:**
+   ```
+   uv run listen_to_idraw.py
+   ```
+   The first run downloads Python 3.12 and the libraries; later runs start
+   straight away. A browser tab opens at `http://127.0.0.1:5810`.
+
+Then carry on from [step 2 of Get started](#2-get-idraw-osc-on-the-ipad).
+**On a Mac**, macOS may ask whether Terminal (or Python) may find devices on
+your local network or accept incoming connections: allow both, or the iPad
+can't get through.
+
+### Developers
+
+```
+uv run listen_to_idraw.py --dry-run     # never touch the AxiDraw; log moves instead
+uv run listen_to_idraw.py --raw-osc     # print every OSC message as it arrives
+uv run listen_to_idraw.py --help        # the rest: --verbose, --osc-port, --data-dir, --open…
+uv run pytest                           # the test suite
+uv run python -m pyflakes *.py PantographApp/*.py    # lint, as CI runs it
+```
+
+- The browser tests drive an installed Edge or Chrome through Playwright, and
+  skip if neither is there. WebKit (for Safari) is optional:
+  `uv run python -m playwright install webkit`.
+- `tests/test_hardware.py` talks to a real AxiDraw (lifts the pen, never moves
+  the carriage) and only runs with `PANTOGRAPH_HARDWARE=1` set.
+- **After changing dependencies in `pyproject.toml`, run `uv lock` and commit
+  `uv.lock` with it.** The launcher runs with `--locked` and refuses to start
+  when the two disagree, so a forgotten lock breaks every install while the
+  repo still seems fine.
+- **Without uv**, in a Python 3.12 virtual environment:
+  ```
+  pip install python-osc "websockets>=13" numpy rdp platformdirs PantographApp/vendor/axidrawinternal-3.9.6-py2.py3-none-any.whl PantographApp/vendor/AxiDraw_API_396
+  python listen_to_idraw.py
+  ```
+  (The AxiDraw API is vendored in `PantographApp/vendor/`; its README says
+  why and how to upgrade it.)
+- **CI** (`.github/workflows/ci.yml`) runs on every push to `main`: lint, the
+  tests, then the real launcher with `--smoke-test` (the app starts, checks it
+  can draw and save, and quits), then builds the release zip, installs from it
+  and smoke-tests the installed copy.
+- **Releasing:** set the new version in `pyproject.toml`, run `uv lock`,
+  commit and push. Then tag that commit `v` + the version (e.g. `v0.1.1`) and
+  push the tag — in GitHub Desktop, History → right-click the commit →
+  **Create Tag…** → **Push origin**. `.github/workflows/release.yml` checks
+  the tag matches the version, re-runs everything, and publishes the release
+  with the zip and the installer attached.
+- The full build history, gotchas and decisions are in
+  [`PantographApp/BUILD_GUIDE.md`](PantographApp/BUILD_GUIDE.md).
+
+**Where things live on Windows:** the installed app in
+`%LOCALAPPDATA%\Pantograph\app`, its Python and libraries in `…\runtime`,
+settings in `…\settings.json`, logs in `…\Logs`; drawings in
+`Documents\Pantograph`. Replacing or deleting `app` loses nothing else.
 
 ---
 
@@ -332,8 +349,8 @@ reference:
 
 *(From here down: technical reference — file layout and internals, for
 anyone running the less common tools, maintaining this code, or curious how
-it works. If you just want to draw, [Setup](#setup) above is everything you
-need.)*
+it works. If you just want to draw, [Get started](#get-started) above is
+everything you need.)*
 
 | File | What it is |
 |------|------------|
@@ -345,7 +362,9 @@ need.)*
 | `dot_healer.py` | Offline CLI: rejoin strokes that a fast pen tore into a trail of dots. |
 | `saved_drawings/` | Example drawings, kept for documentation and as test data. The app saves to `Documents/Pantograph/` instead. |
 | `recording.py` | The drawing-recording format: records the live session, reads and writes plot SVGs. |
-| `PantographApp/` | App-specific code: the page (`ui/`), settings, data folders, the tools, the system file windows, startup/shutdown, and the build guide. |
+| `PantographApp/` | App-specific code: the page (`ui/`), settings, data folders, the system file windows, startup/shutdown, the Windows launcher (`Pantograph.bat`), the vendored AxiDraw API (`vendor/`), and the build guide. |
+| `install-windows.ps1` | The one-line installer: downloads the latest release into `%LOCALAPPDATA%\Pantograph\app` and makes the shortcuts. |
+| `.github/workflows/` | CI on every push (`ci.yml`) and the release build on a `v*` tag (`release.yml`). |
 | `tests/` | `uv run pytest`: the recording format, stroke handling, and the whole app end to end. |
 | `AGENTS.md` | Project background and the iDraw OSC message reference. |
 | `MEETINGS.html` | Meeting history. |
@@ -473,13 +492,13 @@ so the gap between the drawing and the orange path *is* the thinning.
 
 **Settings** (Plotter preferences and Effects) are saved on the computer
 (`settings.json` in the per-user config folder) and apply at startup, even
-before a browser is open. The AxiDraw model and paper size are settings too;
-paper larger than the model reaches is clamped to its travel, and neither can
-change mid-plot. **Effects only** plots just what the effects add and drops the
+before a browser is open. The AxiDraw model and paper size are settings too.
+The paper isn't limited by the model's reach (the layout shows how much of it
+the machine covers), and neither can change mid-plot. **Effects only** plots just what the effects add and drops the
 base line, for re-running a finished drawing over a base layer already on the
 paper.
 
-**Importing a drawing** (Open file… → Import to live drawing) feeds it back
+**Importing a drawing** (File → Import to canvas…) feeds it back
 through the live pipeline, so the paper mapping, flips, tilt, the effect chain
 and the optimizer all apply — and it's recorded into the drawing like anything
 else. Strokes drawn on the iPad while it runs appear at once and are plotted
@@ -496,7 +515,7 @@ carriage back to it.
 drawing it, measured on a clock that only runs while marks are being drawn. So
 it climbs while you draw faster than the machine, falls whenever you stop, and
 reads 0 once it's caught up. It's also what decides when lines get simplified
-("Keeping up", Plot tab).
+("Keeping up", in Plotter preferences).
 
 ---
 
@@ -532,12 +551,12 @@ per-stroke tool, drawingWidth, color, canvas size, and points as
 the source of truth** — the `<path>`/`<circle>` elements are cosmetic, so the
 file looks right in a viewer.
 
-Replay pushes those points back through `_emit_point` exactly as if they had
-just arrived over OSC, so paper mapping, flips, tilt, the effect chain and the
+Importing pushes those points back through `_emit_point` exactly as if they
+had just arrived over OSC, so paper mapping, flips, tilt, the effect chain and the
 optimizer all re-apply downstream. That is the point of replaying at the *input*
 level: the same drawing can be plotted again with different settings and
 different post-processors switched on. Idle gaps are shortened to
-`REPLAY_MAX_GAP_SEC` so a drawing with long pauses doesn't take its original
+`IMPORT_MAX_GAP_SEC` so a drawing with long pauses doesn't take its original
 wall-clock time.
 
 A **saved** file is a picture of the sheet instead: its points are where the
@@ -549,9 +568,10 @@ before.
 
 `recording.py` is the one implementation of this format: it records the live
 session (from the same messages the page receives), reads plot SVGs and writes
-them; `svg_transform.py` and `dot_healer.py` use it. The other readers are
-`listen_to_idraw.py` (`_replay_feed`) and `PantographApp/library.py` (the
-Drawings and Tools tabs). Keep them in step.
+them; `svg_transform.py`, `dot_healer.py` and `listen_to_idraw.py` all go
+through it. The one other place that walks a recording's points is
+`_feed_strokes` in `listen_to_idraw.py`, which plays an import into the
+pipeline. Keep the two in step.
 
 ---
 
