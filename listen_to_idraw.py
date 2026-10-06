@@ -2222,8 +2222,15 @@ def open_path(path) -> dict:
     path = Path(path)
     try:
         rec, vw, vh = recording.load_svg(path)
-    except (ValueError, OSError) as e:
+    except OSError as e:
         return {"type": "opened", "ok": False, "error": str(e)}
+    except ValueError:
+        # An SVG from another program. What gets plotted is the recording a
+        # Pantograph file carries inside it (the strokes as they were drawn);
+        # the shapes in an ordinary SVG aren't read at all.
+        return {"type": "opened", "ok": False,
+                "error": f"{path.name} wasn't saved by Pantograph, so it can't be imported. "
+                         "Only drawings saved from Pantograph can."}
     if not (rec.get("strokes") or []):
         return {"type": "opened", "ok": False, "error": f"{path.name} has no strokes."}
     _opened = {"name": path.name, "dir": str(path.parent), "rec": rec, "vw": vw, "vh": vh}

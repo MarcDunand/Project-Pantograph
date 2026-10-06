@@ -453,3 +453,53 @@ def test_the_ipad_goes_quiet_when_idraw_has_been_closed(app, age, label, live):
         assert got["label"] == label, got
         assert ("ok" in got["dot"]) == live, got
         browser.close()
+
+
+def test_either_device_can_be_skipped_and_skipping_both_is_warned_about(app):
+    """
+    An iPad alone records drawings; a plotter alone plots saved ones. The page
+    lets either be skipped, and says plainly how little is left with neither.
+    """
+    sync_api = pytest.importorskip("playwright.sync_api")
+    with sync_api.sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch(channel="msedge", headless=True)
+        except Exception:                       # noqa: BLE001
+            pytest.skip("no Edge installed")
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{app.ui_port}")
+        page.wait_for_function("document.getElementById('conn-label').textContent === 'live'",
+                               timeout=10000)
+        # One synchronous step, so none of the engine's own status broadcasts
+        # can land between a click and the read after it (see the test above).
+        got = page.evaluate("""() => {
+            const P = window.pantograph, $ = id => document.getElementById(id);
+            const shown = () => ['first-run', 'no-plotter', 'nothing-connected']
+                                  .filter(id => !$(id).hidden).join(',');
+            const plotter = state => P.handle({ type: 'plotter_status', state, message: '', motors: false });
+            const steps = {};
+            plotter('not_found');                 // the test app runs with --dry-run, which counts as a plotter
+            steps.start = shown();
+            $('fr-skip').click();                 steps.noIpad = shown();
+            $('no-plotter-skip').click();         steps.neither = shown();
+            $('nc-plotter').click();              steps.backToPlotter = shown();
+            $('no-plotter-skip').click();
+            $('nc-ipad').click();                 steps.backToIpad = shown();
+            $('fr-skip').click();
+            $('nc-continue').click();             steps.continued = shown();
+            return steps;
+        }""")
+        assert got == {"start": "first-run", "noIpad": "no-plotter", "neither": "nothing-connected",
+                       "backToPlotter": "no-plotter", "backToIpad": "first-run", "continued": ""}, got
+
+        # Skipping only the iPad, with a plotter there, is a normal way to work: no warning.
+        page.reload()
+        page.wait_for_function("document.getElementById('conn-label').textContent === 'live'",
+                               timeout=10000)
+        alone = page.evaluate("""() => {
+            const $ = id => document.getElementById(id);
+            $('fr-skip').click();
+            return ['first-run', 'no-plotter', 'nothing-connected'].filter(id => !$(id).hidden).join(',');
+        }""")
+        assert alone == "", alone
+        browser.close()

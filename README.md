@@ -20,6 +20,10 @@ behind, an optimizer thins the pending queue so it can catch up.
 **An AxiDraw is optional.** Without one you still get the live preview, and the
 drawing is saved as an SVG you can plot later on a machine that has one.
 
+**So is the iPad.** With only an AxiDraw you can plot a drawing that was saved
+from Pantograph, your own or one someone sent you. (It can't plot SVGs made by
+other programs: see [Using Pantograph](#using-pantograph).)
+
 ---
 
 ## Get started
@@ -106,12 +110,12 @@ power the motors). There is no AxiDraw software to install: Pantograph carries
 what it needs. The **Plotter** button in the top bar turns green when it's
 connected; if it doesn't, press it and choose **Connect**.
 
-No AxiDraw? Skip this. Everything else works, and File → **Save as…** gives
-you an SVG to plot later.
+No AxiDraw? Press **Use without a plotter** on the card that asks for one.
+Everything else works, and File → **Save as…** gives you an SVG to plot later.
 
 ### 5. Draw
 
-Strokes appear on the paper in the browser as you draw, and the AxiDraw starts
+Strokes appear on the paper in the Pantograph window as you draw, and the AxiDraw starts
 moving along with you.
 
 ---
@@ -162,6 +166,13 @@ moving along with you.
   while it's already running just brings its window forward. (In a browser,
   closing the tab leaves Pantograph running: use Quit, or open
   `http://127.0.0.1:5810` to get the page back.)
+
+**No iPad?** Press **Use without an iPad** on the start-up card, then File →
+Import to canvas… to plot a saved drawing. Only drawings saved from Pantograph
+can be imported: what gets plotted is the record of the strokes that such a
+file carries inside it, which an SVG from Inkscape or Illustrator doesn't
+have. With neither an iPad nor a plotter, Pantograph says so: all that's left
+is opening a saved drawing to look at it.
 
 **No AxiDraw?** Everything works except the moving plotter: the drawing is
 recorded and saved just the same. Copy the SVG to a computer with an AxiDraw
@@ -523,7 +534,7 @@ so the gap between the drawing and the orange path *is* the thinning.
 
 **Settings** (Plotter preferences and Effects) are saved on the computer
 (`settings.json` in the per-user config folder) and apply at startup, even
-before a browser is open. The AxiDraw model and paper size are settings too.
+before the window is open. The AxiDraw model and paper size are settings too.
 The paper isn't limited by the model's reach (the layout shows how much of it
 the machine covers), and neither can change mid-plot. **Effects only** plots just what the effects add and drops the
 base line, for re-running a finished drawing over a base layer already on the
@@ -566,7 +577,7 @@ shows the drawing as it was actually drawn — only the pen is affected.
 
 To write one: subclass `Effect`, override only the `on_<kind>` hooks you care
 about, list tunable class attributes in `PARAMS`, and register it in `REGISTRY`.
-The browser panel and the `_EFFECT_SWITCHES` block pick it up from there. Full
+The Effects tab and the `_EFFECT_SWITCHES` block pick it up from there. Full
 guide in the `postprocess.py` module docstring.
 
 Effects are applied in registry order but are not designed against each other —

@@ -1037,7 +1037,9 @@ function resetEffects() {
 
 const status = { osc: { state: 'stopped', port: 8800, message: '' }, oscAge: null,
                  plotter: { state: 'not_found', message: '', motors: false }, ips: [] };
+let skipIpad = false;           // "Use without an iPad" was pressed
 let skipPlotter = false;        // "Use without a plotter" was pressed
+let skipBoth = false;           // ...and so was "Continue anyway", with neither
 
 // Nothing tells us iDraw has closed. OSC is connectionless — the iPad sends
 // points into the air and there is no socket to drop — so all we ever know is
@@ -1131,11 +1133,16 @@ function updatePlotButtons() {
   });
 }
 
-// The two cards over the paper: connect the iPad, then connect the plotter.
+// The cards over the paper: connect the iPad, then connect the plotter. Either
+// can be skipped - an iPad alone records drawings, a plotter alone plots saved
+// ones. Skipping both gets a third card saying how little that leaves.
 function updateCards() {
-  const waitingForIpad = status.oscAge === null && canvasEmpty && status.osc.state === 'listening';
+  const ipadSilent = status.oscAge === null && canvasEmpty && status.osc.state === 'listening';
+  const waitingForIpad = ipadSilent && !skipIpad;
   $('first-run').hidden = !waitingForIpad || editingLayout;
   $('no-plotter').hidden = waitingForIpad || plotterReady() || skipPlotter || editingLayout;
+  const neither = skipIpad && skipPlotter && status.oscAge === null && !plotterReady();
+  $('nothing-connected').hidden = !neither || skipBoth || editingLayout;
 }
 
 // Popovers under the status buttons.
@@ -1175,6 +1182,15 @@ $('fr-troubleshoot').onclick = e => { e.stopPropagation(); openTroubleshoot('ipa
 $('no-plotter-ts').onclick = e => { e.stopPropagation(); openTroubleshoot('plotter'); };
 $('no-plotter-connect').onclick = () => send({ type: 'connect_plotter' });
 $('no-plotter-skip').onclick = () => { skipPlotter = true; updateCards(); };
+$('fr-skip').onclick = () => {
+  skipIpad = true;
+  updateCards();
+  // With a plotter there, say where to go next. Without one, the next card speaks.
+  if (plotterReady()) toast('To plot a drawing saved from Pantograph: File, then Import to canvas.');
+};
+$('nc-ipad').onclick = () => { skipIpad = false; updateCards(); };
+$('nc-plotter').onclick = () => { skipPlotter = false; updateCards(); };
+$('nc-continue').onclick = () => { skipBoth = true; updateCards(); };
 
 $('osc-restart').onclick = () => send({ type: 'restart_osc' });
 

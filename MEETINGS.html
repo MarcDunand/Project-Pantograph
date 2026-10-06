@@ -392,6 +392,23 @@
       </div>
     </div>
 
+    <!-- Work session: the app's own window, v0.2.0 -->
+    <div class="entry">
+      <div class="card">
+        <span class="badge">Work session</span>
+        <span class="date">October 5, 2026</span>
+        <h2>Pantograph gets its own window: v0.2</h2>
+        <p class="session">One evening session, ending with a second release.</p>
+        <p>Pantograph now behaves like <strong>an ordinary desktop app</strong>: it opens in a window of its own, with its own icon in the taskbar, and no black console window left sitting behind it. Version 0.2.0 is published.</p>
+        <ul>
+          <li><strong>Confirmed beyond Marc's PC:</strong> the download installed and ran on another person's Windows computer, and the installed copy drove the iPad and AxiDraw, lifting the pen and releasing the motors when interrupted.</li>
+          <li><strong>Its own window.</strong> No more browser tab. Closing the window quits safely, the same as the Quit button; starting Pantograph twice just brings the open window forward. On a computer that can't show the window, it still opens in the browser as before.</li>
+          <li><strong>Two fixes from trying it out:</strong> the icon was dark lines that disappeared on a dark taskbar, so it is now a white mark on a dark tile; and the progress bar for a large imported drawing sat at zero for minutes while the plot was actually under way.</li>
+          <li>The automatic checks on GitHub now open the real window too, so a release can't ship if the window doesn't come up.</li>
+        </ul>
+      </div>
+    </div>
+
   </div><!-- /timeline -->
 
   <section class="status">
@@ -402,7 +419,7 @@
       <li>A post-processing framework (<code>postprocess.py</code>) exists with perpendicular pressure lines, mirror, and centerline-width-from-pressure effects, plus SVG upload/replay and terminal-log reconstruction.</li>
       <li>Two command-line tools for finished drawings stay outside the app: <code>svg_transform.py</code> (flip, minimum width) and <code>dot_healer.py</code> (rejoin strokes a fast pen tore into dots).</li>
       <li>The same program now runs without an AxiDraw (the separate <code>iDraw_to_svg/</code> version was removed on September 18): it records drawings to plottable SVGs for plotting later.</li>
-      <li><strong>The Pantograph app is released for Windows</strong> (v0.1.1, September 27): a one-line install, no Python needed. Mac users run it from source for now. Details in <a href="PantographApp/BUILD_GUIDE.md">the build guide</a>.</li>
+      <li><strong>The Pantograph app is released for Windows</strong> (v0.2.0, October 5): a one-line install, no Python needed, and it opens in its own window. Tested on two PCs. Mac users run it from source, in the browser, for now. Details in <a href="PantographApp/BUILD_GUIDE.md">the build guide</a>.</li>
       <li>Both replay bugs are <strong>fixed</strong> — the mid-plot stop (thread race) and the double-plot re-record.</li>
       <li><strong>Demoed live on video:</strong> Gina drawing while the AxiDraw concurrently recreated the drawing on paper.</li>
       <li><span class="open"><strong>Known open items:</strong></span> a Mac package, once there's a Mac to test on; the pressure-lag fix, waiting on a Pencil; preview rendering quality (smoothing) remains a longer-term want from the early plan.</li>

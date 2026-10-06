@@ -7,20 +7,27 @@ phase ends with a checkpoint, and nothing moves on until that checkpoint passes.
 **Keep this file current as work lands:** tick boxes, record decisions, add
 gotchas.
 
-**Status (2026-10-05):** Phases −1 to 10 are done. v0.1.1 has been installed
-and run on a second person's Windows PC, and the installed copy has driven the
-iPad and AxiDraw, console-close included. **Phase 11, Pantograph's own window
-(Option 1B), is built** and waits for Marc's look at it and a v0.2.0 release;
-see Phase 11.
+**Status (2026-10-05): every phase is done, and v0.2.0 is released for
+Windows.** Pantograph installs with one command, opens in a window of its own
+with no console, and has been run on Marc's PC and one other person's, with
+the iPad and AxiDraw.
 
-**Earlier status (2026-09-27):** Phases −1 to 9 are done. **v0.1.0 is released** on
-GitHub (published 2026-09-27 04:42 UTC; the release workflow passed). Phase 10
-is under way: the README is rewritten (2026-09-27), and what's left is the
-short machine checklist in §6, starting with Marc running the installed copy
-on his own PC. **The install command in v0.1.0 is stopped by Microsoft
-Defender** (G-57). The fix shipped as **v0.1.1** (published 2026-09-27
-06:40 UTC), and Marc installed it with the new command and has it working. The pressure-lag fix is deferred until an Apple Pencil is available
-(see Phase −1). The Mac package waits until there's a Mac to test on.
+What's left, none of it blocking:
+- **Pressure-lag fix:** written, waiting for an Apple Pencil to test with
+  (Phase −1). The only unticked box in this file.
+- **A Mac package:** needs a Mac. The launcher and installer are specified in
+  Phase 8, CI has a commented slot for `macos-latest`, and the window is one
+  dependency marker away (Phase 11).
+- **Uploading drawings to the website:** sketched in §8, not started.
+
+Release history:
+- **v0.1.0**, 2026-09-27: first release. Its install command was stopped by
+  Microsoft Defender (G-57).
+- **v0.1.1**, 2026-09-27: the plainer install command. Confirmed on a second
+  person's PC on 2026-10-05.
+- **v0.2.0**, 2026-10-05 (published 2026-10-06 03:15 UTC): Pantograph's own
+  window (Phase 11), a light-on-dark icon, and the import progress bar fix
+  (G-63).
 
 **Hardware checks.** These can't be verified without the iPad and AxiDraw.
 Marc's session on 2026-09-19 covered the first five:
@@ -192,9 +199,9 @@ installs everything it needs. The app then opens in the browser as one tool:
 | Decision | Choice |
 |---|---|
 | Scope | A **demo**. Prefer saving time over polish (rule above). |
-| Delivery | **Option 1A**: launchers that use `uv` to install Python and the dependencies. The UI is the normal browser. |
+| Delivery | **Option 1A**, then **1B on top** (since v0.2.0): launchers that use `uv` to install Python and the dependencies. The UI is Pantograph's own window on Windows, and the normal browser elsewhere or as the fallback. |
 | Install routes | **Primary, preferred: one pasted command** (PowerShell on Windows, Terminal on Mac). **Alternative: click-download** a zip, extract it, double-click the launcher. The README shows the two **side by side**, so the alternative is visible immediately (Phase 10). |
-| Future | **Option 1B**: a native window via pywebview, with the browser as fallback. It gets added later as a thin layer, and 1A must stay ready for it (§7). |
+| Window | **Option 1B, done (Phase 11)**: a native window via pywebview, with the browser as fallback. Added as a thin layer over 1A, which is what §7's rules were for. |
 | Platforms | Windows x64 and Macs (Apple Silicon; Intel on a recent macOS). Windows on ARM isn't specifically handled, since it's rare and the risk is low. |
 | Signing | None. The click route's install warnings are acceptable and documented. |
 | Share button | Not now. A future "upload to the Pantograph website" is expected (§8). |
@@ -288,7 +295,7 @@ iPad (iDraw OSC) ──UDP :8800──► listen_to_idraw.py  (engine, backgroun
                                 preview.py    (one port: static UI + /ws, 127.0.0.1 only)
                                    │  HTTP GET + WebSocket
                                    ▼
-                    Browser tab (1A)  /  pywebview window (1B, later)
+                    pywebview window (1B, Windows)  /  browser tab (1A)
                                    │
                     PantographApp/ui/  (index.html, app.js, style.css)
 ```
@@ -304,8 +311,9 @@ iPad (iDraw OSC) ──UDP :8800──► listen_to_idraw.py  (engine, backgroun
   `websockets` library's HTTP support is GET-only. If that becomes limiting,
   switch to `aiohttp`.
 - **The main thread is kept free.** The engine runs on background threads. In
-  1A the main thread opens the browser and waits for a stop signal; in 1B the
-  window takes over the main thread (§7).
+  browser the main thread waits for a stop signal and serves file-dialog
+  calls; with the window (1B), the window takes over the main thread (§7,
+  Phase 11).
 
 ### Repo layout after the build
 
@@ -1267,9 +1275,39 @@ of it:
   and it also writes each size as a PNG to look at.
 - **The import's progress bar sat at 0** (G-63).
 
-- [ ] **Checkpoint (Marc):** after tagging v0.2.0 and updating: the Start-menu
-  launch gives a window and no console, with the new icon; CI's new window
-  step is green.
+- [x] **Checkpoint (Marc), passed 2026-10-05:** v0.2.0 is released
+  (published 2026-10-06 03:15 UTC) and the updated install works from the
+  Start menu. CI's window step passed on GitHub's runner, so their machines
+  can open the window. Windows has an Allow rule for the runtime's
+  `pythonw.exe` on the active network profile. Not separately exercised: an
+  iPad stroke arriving in the console-free version (same code and same
+  firewall rule shape as before, so no dedicated test was asked for).
+
+### After v0.2.0 (not yet released)
+
+**2026-10-05, from Marc:**
+
+- **"Use without an iPad"** on the start-up card, beside the existing "Use
+  without a plotter" on the next one. Importing already worked behind that
+  card; the card just read as though an iPad were required. Someone with only
+  an AxiDraw can now dismiss it and plot a saved drawing. It lasts for the
+  session, like the plotter one: the iPad listener stays on, and a stroke
+  arriving later just works.
+- **Skipping both gets a warning card:** with no iPad and no plotter there is
+  nothing to draw with and nothing to plot on. It offers to go back to either
+  card, or to continue anyway. `updateCards()` in `app.js` decides which of the
+  three cards shows; `test_either_device_can_be_skipped…` walks every path.
+- **Import still only takes Pantograph's own SVGs.** What is plotted is the
+  `draw2axi-recording` inside the file, not its shapes, so an SVG from another
+  program has nothing to plot. The UI copy says "saved from Pantograph", and a
+  foreign SVG is refused with "*name* wasn't saved by Pantograph, so it can't
+  be imported" where it used to show the parser's "no <metadata> recording
+  found". **Plotting arbitrary SVGs would be a new feature** (reading paths,
+  curves and transforms into strokes) and has not been built or asked for.
+- **Release notes on GitHub were a narrow column:** the release page treats a
+  line break inside a paragraph as a real one. The template in `release.yml`
+  is one line per paragraph now. The v0.2.0 page itself keeps its old text
+  unless it's edited by hand.
 
 ---
 
@@ -1306,9 +1344,19 @@ For the release notes:
   "no plotter".
 - The console is quieter; `--verbose` restores the per-point output.
 
+Since v0.2.0:
+- Pantograph opens in its own window, with its own taskbar icon, instead of a
+  browser tab. Closing the window quits, like the Quit button.
+- No console window stays open. Starting the launcher with any option gives
+  the console version back.
+- Starting it twice brings the existing window forward.
+- An import's progress bar moves from the start, not only near the end.
+
 ---
 
 ## 6. Test list (before the first release)
+
+**All done as of 2026-10-05.** Kept as the record of what was checked and how.
 
 **Cut down 2026-09-27.** Most of the original list was covered by the
 machine sessions of 09-19 to 09-21 or is pinned by automated tests, so what's
@@ -1317,7 +1365,7 @@ earlier hardware session ran from the development checkout; the installed copy
 runs its own Python from `%LOCALAPPDATA%\Pantograph\runtime`, a different
 `python.exe` that Windows' firewall has never seen.
 
-**Still to do (Windows):**
+**Checked on real machines (Windows), all done:**
 - [x] **Done 2026-09-27 with v0.1.1:** the new one-line command installed it
       on Marc's PC and the app works. Still untested: a PC that has never had
       Python or uv on it, and the download route.

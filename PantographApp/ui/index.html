@@ -171,6 +171,10 @@
             <li>Draw a line - it appears here.</li>
           </ol>
           <p class="detail">Nothing arriving? <button class="link-btn" id="fr-troubleshoot">Troubleshoot the connection</button></p>
+          <div class="btn-row">
+            <button class="btn" id="fr-skip">Use without an iPad</button>
+            <button class="info" data-info="Without an iPad you can still plot a drawing that was saved from Pantograph, yours or one someone sent you: File, then Import to canvas. SVG files from other programs can't be imported. An iPad can join at any time - its address stays in the top bar." aria-label="What works without an iPad"></button>
+          </div>
         </div>
       </div>
 
@@ -186,6 +190,19 @@
             <button class="btn primary" id="no-plotter-connect">Connect</button>
             <button class="btn" id="no-plotter-skip">Use without a plotter</button>
             <button class="link-btn" id="no-plotter-ts">Troubleshoot</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- both cards above were skipped: say what that leaves -->
+      <div class="first-run" id="nothing-connected" hidden>
+        <div class="card">
+          <h2>No iPad and no plotter</h2>
+          <p>Pantograph plots what an iPad draws. With neither connected there is nothing to draw with and nothing to plot on, so there is very little it can do: it can open a saved drawing and show it, and that is all.</p>
+          <div class="btn-row">
+            <button class="btn primary" id="nc-ipad">Connect an iPad</button>
+            <button class="btn primary" id="nc-plotter">Connect a plotter</button>
+            <button class="btn" id="nc-continue">Continue anyway</button>
           </div>
         </div>
       </div>

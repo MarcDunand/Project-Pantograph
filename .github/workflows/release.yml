@@ -70,6 +70,9 @@ jobs:
           files: |
             pantograph-windows.zip
             install-windows.ps1
+          # One line per paragraph, on purpose. GitHub's release page treats a
+          # line break inside a paragraph as a real one, so text wrapped here
+          # for the editor shows up there as a narrow column.
           body: |
             ## Install on Windows
 
@@ -79,21 +82,12 @@ jobs:
             irm https://github.com/${{ github.repository }}/releases/latest/download/install-windows.ps1 | iex
             ```
 
-            Or download `pantograph-windows.zip`, extract it, and run
-            `PantographApp\Pantograph.bat`. **Extract it first** — running the
-            launcher from inside the zip viewer won't work.
+            Or download `pantograph-windows.zip`, extract it, and run `PantographApp\Pantograph.bat`. **Extract it first** — running the launcher from inside the zip viewer won't work.
 
-            The first launch downloads Python and the libraries (about 150 MB)
-            into its own folder. That happens once; after it Pantograph starts
-            straight away and works offline. Nothing is installed
-            system-wide, and no admin rights are needed.
+            The first launch downloads Python and the libraries (about 150 MB) into its own folder. That happens once; after it Pantograph starts straight away and works offline. Nothing is installed system-wide, and no admin rights are needed.
 
-            Pantograph opens in a window of its own; closing it quits (the pen
-            lifts and the drawing is saved). Windows may ask once whether
-            Python can use the network: choose Allow, or the iPad can't reach
-            it.
+            Pantograph opens in a window of its own; closing it quits (the pen lifts and the drawing is saved). Windows may ask once whether Python can use the network: choose Allow, or the iPad can't reach it.
 
-            Running the installer again updates an existing copy. Your drawings
-            and settings live outside the app folder and are left alone.
+            Running the installer again updates an existing copy. Your drawings and settings live outside the app folder and are left alone.
 
             macOS isn't packaged yet — see the README to run it from source.

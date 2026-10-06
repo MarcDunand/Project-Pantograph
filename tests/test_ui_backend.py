@@ -91,7 +91,7 @@ def test_open_preview_and_import(app):
     assert status == 200 and body.startswith(b"<svg") and headers["Content-Security-Policy"] == "sandbox"
 
     bad = of(send(app, {"type": "open_path", "path": os.path.join(ROOT, "README.md")}), "opened")[0]
-    assert not bad["ok"] and "recording" in bad["error"]
+    assert not bad["ok"] and "wasn't saved by Pantograph" in bad["error"]
 
     msgs = send(app, {"type": "import_opened"}, wait=1.0)
     assert of(msgs, "import_progress")[-1]["name"] == "drawing_dense.svg"
@@ -264,3 +264,16 @@ def test_the_progress_bar_moves_while_the_drawing_is_still_being_fed(app):
     during = [m for m in of(msgs, "import_progress") if m["active"] and m["phase"] == "plotting"]
     assert max(m["plotted"] for m in during) > 0, [m["plotted"] for m in during]
     send(app, {"type": "import_cancel"}, wait=0.5)
+
+
+def test_an_svg_from_another_program_is_refused_in_plain_words(app):
+    """Only Pantograph's own files carry the strokes to plot. Someone who brings
+    an ordinary SVG should be told that, not shown a parser's complaint."""
+    other = os.path.join(app.data_dir, "from-inkscape.svg")
+    with open(other, "w", encoding="utf-8") as f:
+        f.write('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">'
+                '<path d="M10 10 L90 90"/></svg>')
+    reply = of(send(app, {"type": "open_path", "path": other}, wait=0.5), "opened")[-1]
+    assert not reply["ok"]
+    assert "from-inkscape.svg wasn't saved by Pantograph" in reply["error"]
+    assert "metadata" not in reply["error"]
