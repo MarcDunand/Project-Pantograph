@@ -47,6 +47,7 @@ import layout
 import postprocess
 import preview
 import recording
+from PantographApp import shell
 
 # Everything goes through this logger: INFO and up reach the console, DEBUG
 # (every point and plotter move) only with --verbose. PantographApp.shell sets
@@ -1040,6 +1041,7 @@ DRAWABLE_TOOLS = {"pen", "pencil", "marker", "monoline", "crayon", "fountainPen"
 # come from the recording itself, so this only affects pacing (a gap above
 # PEN_REST_SEC rests the pen mid-stroke, exactly as it would live).
 IMPORT_MAX_GAP_SEC = 0.30
+IMPORT_REPORT_SEC  = 0.4     # how often the page hears how far the pen has got
 
 # One import at a time. Its points go through the live pipeline exactly as the
 # iPad's do: they're drawn on the canvas, recorded into the drawing, and saved
@@ -1188,6 +1190,7 @@ def _feed_strokes(strokes: list, marks: bool = False) -> str:
     all apply. Returns "done" or "cancelled".
     """
     mark = 0
+    last_report = time.monotonic()
     for st in strokes:
         pts = st.get("points") or []
         if not pts:
@@ -1218,6 +1221,12 @@ def _feed_strokes(strokes: list, marks: bool = False) -> str:
                     return "cancelled"
                 mark += 1
                 _feed_local.mark = mark
+                # The pen is plotting while this feeds, and feeding keeps the
+                # drawing's own timing: minutes, for a big one. Say how far
+                # the pen has got as it goes, not only once the feed is over.
+                if time.monotonic() - last_report > IMPORT_REPORT_SEC:
+                    last_report = time.monotonic()
+                    preview.broadcast(_import_msg())
             t_pt, x, y, p_raw = pt[0], pt[1], pt[2], pt[3]
             if prev_t is not None:
                 time.sleep(min(max(0.0, t_pt - prev_t), IMPORT_MAX_GAP_SEC))
@@ -1294,7 +1303,7 @@ def _wait_for_plotter() -> str:
         if _import_cancel.is_set():
             return "cancelled"
         time.sleep(0.1)
-        if time.monotonic() - last_report > 0.4:
+        if time.monotonic() - last_report > IMPORT_REPORT_SEC:
             last_report = time.monotonic()
             preview.broadcast(_import_msg())
     return "done"
@@ -1855,6 +1864,10 @@ def _handle_preview_message(msg):
             OSC_PORT = int(msg["port"])
     elif t == "quit":
         request_stop()
+    elif t == "focus_window":
+        # A second launch: bring this copy's window forward. "ok" is False
+        # when the UI is in a browser, and the caller opens a tab instead.
+        return {"type": "focused", "ok": shell.focus_window()}
     elif t == "set_layout":
         return set_layout(msg.get("layout") or {})
     elif t == "set_paper":
@@ -2153,8 +2166,22 @@ _main_calls: queue.Queue = queue.Queue()
 
 
 def run_on_main(fn):
-    """Run fn() on the main thread; returns a Future with its result."""
+    """
+    Run fn() where the system's file windows can open; returns a Future with
+    its result. In a browser that's the main thread, which main()'s loop
+    serves. With Pantograph's own window the main thread belongs to the
+    window, which shows its own file dialogs from any thread (dialogs.py), so
+    fn just needs a thread to wait on.
+    """
     future: concurrent.futures.Future = concurrent.futures.Future()
+    if shell.current_window() is not None:
+        def run():
+            try:
+                future.set_result(fn())
+            except Exception as e:   # noqa: BLE001 — reported to the page
+                future.set_exception(e)
+        threading.Thread(target=run, name="file-dialog", daemon=True).start()
+        return future
     _main_calls.put((fn, future))
     return future
 
@@ -2614,7 +2641,10 @@ def main(argv=None) -> int:
         ),
     )
     parser.add_argument("--no-browser", action="store_true",
-                        help="Don't open the UI in a browser.")
+                        help="Don't open the UI at all (no window, no browser).")
+    parser.add_argument("--browser", action="store_true",
+                        help="Open the UI in the default browser instead of "
+                             "Pantograph's own window.")
     parser.add_argument("--port", type=int, metavar="N",
                         help="Serve the UI on port N only (default: the first free port "
                              "from 5810 to 5830).")
@@ -2632,6 +2662,10 @@ def main(argv=None) -> int:
                         help="Start up, check the app answers and can draw and save, "
                              "then quit. Exit code 0 if all of it worked. Used by CI "
                              "through the real launcher, so the whole install is tested.")
+    parser.add_argument("--window-test", action="store_true",
+                        help="Open Pantograph's own window, check the page loads in it "
+                             "and connects, then quit. Exit code 0 if it did, 1 if the "
+                             "window couldn't open or the page never came up.")
     cli = parser.parse_args(argv)
 
     # The smoke test drives a real startup: dry run so no USB is needed, no
@@ -2639,8 +2673,10 @@ def main(argv=None) -> int:
     smoke_tmp = None                 # the smoke test's own folder, removed after
     if cli.smoke_test:
         cli.dry_run = cli.no_browser = True
-        if not cli.data_dir:
-            cli.data_dir = smoke_tmp = tempfile.mkdtemp(prefix="pantograph-smoke-")
+    if cli.window_test:
+        cli.dry_run = True
+    if (cli.smoke_test or cli.window_test) and not cli.data_dir:
+        cli.data_dir = smoke_tmp = tempfile.mkdtemp(prefix="pantograph-smoke-")
     _show_raw_osc = cli.raw_osc
     DRY_RUN       = cli.dry_run
     if cli.osc_port:
@@ -2663,7 +2699,8 @@ def main(argv=None) -> int:
                 log.error("Couldn't open %s: %s", cli.open,
                           (reply or {}).get("error", "the running copy didn't answer"))
                 return 1
-        shell.open_ui(existing, enabled=not cli.no_browser)
+        if not cli.no_browser and (cli.browser or not shell.show_running(existing)):
+            shell.open_ui(existing)
         return 0
 
     _fx = [e.name for e in _effect_chain]
@@ -2692,6 +2729,7 @@ def main(argv=None) -> int:
         url = start(ui_ports=ui_ports, drawings_dir=paths.drawings, settings=Settings(paths.config))
     except RuntimeError as e:
         log.error("Can't start: %s", e)
+        shell.alert(f"Pantograph can't start.\n\n{e}\n\nThe log is at:\n{log_file}")
         return 1
     shell.record_instance(paths.runtime, preview.port)
     _shutdown_hooks.append(lambda: shell.forget_instance(paths.runtime))
@@ -2700,11 +2738,9 @@ def main(argv=None) -> int:
         reply = open_path(Path(cli.open).resolve())
         if not reply.get("ok"):
             log.error("Couldn't open %s: %s", cli.open, reply.get("error"))
-    shell.open_ui(url, enabled=not cli.no_browser)
     log.info("[ui] %s", url)
 
-    if cli.smoke_test:
-        ok = _smoke_test(paths)
+    def leave(code: int) -> int:
         shutdown()
         if smoke_tmp:
             # Every run used to leave a folder in the temp directory. The log
@@ -2712,8 +2748,30 @@ def main(argv=None) -> int:
             import shutil
             logging.shutdown()
             shutil.rmtree(smoke_tmp, ignore_errors=True)
-        return 0 if ok else 1
+        return code
 
+    if cli.smoke_test:
+        return leave(0 if _smoke_test(paths) else 1)
+
+    # Pantograph's own window, which takes the main thread until it's closed.
+    # Closing it quits: the pen lifts and the drawing is saved, as with Quit.
+    if not cli.no_browser and not cli.browser:
+        tested = {}
+
+        def window_test(window):
+            tested["ok"] = shell.page_is_live(window)
+            log.info("[window] page %s", "is live" if tested["ok"] else "never came up")
+            request_stop()
+
+        icon = Path(__file__).resolve().parent / "PantographApp" / "ui" / "icon.ico"
+        if shell.run_window(url, storage=paths.runtime / "webview", stop=_stop_event,
+                            icon=icon, on_ready=window_test if cli.window_test else None):
+            return leave(0 if tested.get("ok", True) else 1)
+        if cli.window_test:
+            log.error("[window] the window didn't open")
+            return leave(1)
+
+    shell.open_ui(url, enabled=not cli.no_browser)
     try:
         # A timed wait, not a bare wait(): Ctrl+C only interrupts the main
         # thread between waits on Windows.
@@ -2727,4 +2785,12 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as e:           # noqa: BLE001
+        # Started without a console (the launcher's default), a traceback goes
+        # nowhere. Put it in the log and say so in a message box.
+        log.exception("Pantograph stopped unexpectedly")
+        shell.alert(f"Pantograph stopped unexpectedly.\n\n{type(e).__name__}: {e}\n\n"
+                    f"Details are in the log:\n{_log_file or 'Logs\\pantograph.log'}")
+        raise

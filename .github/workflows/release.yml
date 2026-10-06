@@ -88,6 +88,11 @@ jobs:
             straight away and works offline. Nothing is installed
             system-wide, and no admin rights are needed.
 
+            Pantograph opens in a window of its own; closing it quits (the pen
+            lifts and the drawing is saved). Windows may ask once whether
+            Python can use the network: choose Allow, or the iPad can't reach
+            it.
+
             Running the installer again updates an existing copy. Your drawings
             and settings live outside the app folder and are left alone.
 

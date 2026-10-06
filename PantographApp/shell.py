@@ -13,6 +13,7 @@ import logging.handlers
 import os
 import signal
 import sys
+import threading
 import urllib.request
 import webbrowser
 from dataclasses import dataclass
@@ -21,6 +22,11 @@ from pathlib import Path
 import platformdirs
 
 APP_NAME = "Pantograph"
+# Windows groups taskbar buttons by this id. Without one of our own, the window
+# is filed under Python and wears Python's icon.
+APP_ID = "MarcDunand.Pantograph"
+
+log = logging.getLogger("pantograph")
 
 
 def app_version() -> str:
@@ -100,9 +106,10 @@ def setup_logging(logs_dir: Path, verbose: bool = False) -> Path:
     for h in list(logger.handlers):
         logger.removeHandler(h)
 
-    console = logging.StreamHandler(sys.stdout)
-    console.setFormatter(logging.Formatter("%(message)s"))
-    logger.addHandler(console)
+    if sys.stdout is not None:           # None under pythonw: there's no console
+        console = logging.StreamHandler(sys.stdout)
+        console.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(console)
 
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_file = logs_dir / "pantograph.log"
@@ -168,12 +175,179 @@ def ask_running(url: str, message: dict, reply_type: str, timeout: float = 10.0)
 
 def open_ui(url: str, enabled: bool = True) -> None:
     """
-    The one place the UI gets opened. Today: the default browser. Option 1B
-    replaces this with a pywebview window that falls back to the browser —
-    which is why nothing else may open the UI itself.
+    Open the UI in the default browser: the fallback when Pantograph's own
+    window (run_window) isn't available, and what --browser asks for. Nothing
+    else may open the UI itself.
     """
     if enabled:
         webbrowser.open(url)
+
+
+# ── the window ───────────────────────────────────────────────────────────────
+#
+# Pantograph's own window: the same page, shown by pywebview in the system's
+# web engine (Edge WebView2 on Windows, WKWebView on a Mac) instead of a
+# browser tab. It needs the main thread — Cocoa insists — which is why
+# everything else in the engine runs on other threads.
+
+_window = None                  # the open window, or None (browser mode)
+
+
+def current_window():
+    """The open window, or None when the UI is in a browser (or not open)."""
+    return _window
+
+
+def run_window(url: str, storage: Path, stop: threading.Event,
+               icon: Path | None = None, on_ready=None) -> bool:
+    """
+    Show the UI in a window of its own and block until that window is closed.
+    Call it on the main thread.
+
+    Returns True once the window has been open and is now closed, and False if
+    it never opened — a missing library, no WebView2 on this PC — in which case
+    the caller opens the browser instead. It doesn't raise: on a machine where
+    the window can't work, the app must still start.
+
+    `stop` being set closes the window (the Quit button). `on_ready(window)`,
+    if given, is called on a worker thread once the window is up.
+    """
+    global _window
+    try:
+        import webview
+    except Exception as e:                   # noqa: BLE001 — any failure means "use the browser"
+        log.info("[window] not available (%s) — using the browser", e)
+        return False
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+        except Exception:                    # noqa: BLE001 — cosmetic only
+            pass
+
+    window = None
+    try:
+        window = webview.create_window(APP_NAME, url, width=1280, height=860,
+                                       min_size=(900, 600), text_select=True)
+
+        def on_initialized(renderer):
+            # Without the WebView2 runtime pywebview falls back to the
+            # Internet Explorer engine, which can't run the page. Returning
+            # False cancels the window, and start() below returns at once.
+            if sys.platform == "win32" and renderer != "edgechromium":
+                log.info("[window] no Edge WebView2 on this PC (%s) — using the browser", renderer)
+                return False
+            log.info("[window] opening (%s)", renderer)
+
+        def while_open():
+            if on_ready is not None:
+                try:
+                    on_ready(window)
+                except Exception:            # noqa: BLE001
+                    log.exception("[window] on_ready failed")
+            stop.wait()
+            try:
+                window.destroy()
+            except Exception:                # noqa: BLE001 — already closed
+                pass
+
+        window.events.initialized += on_initialized
+        _window = window
+        # private_mode: nothing is kept between runs (settings live in
+        # settings.json). storage_path keeps the engine's working files in our
+        # own folder rather than wherever pywebview would put them.
+        webview.start(while_open, private_mode=True, storage_path=str(storage),
+                      icon=str(icon) if icon and icon.is_file() else None)
+        return window.events.shown.is_set()
+    except Exception as e:                   # noqa: BLE001
+        log.info("[window] couldn't open (%s) — using the browser", e)
+        # If it was up when this happened, it has been the UI: don't open a
+        # browser on top of a session that's ending.
+        return window is not None and window.events.shown.is_set()
+    finally:
+        _window = None
+
+
+def page_is_live(window, timeout: float = 30.0) -> bool:
+    """
+    True once the page in the window has loaded and connected to the engine
+    (its status reads "live"). Used by --window-test.
+    """
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if window.evaluate_js("document.getElementById('conn-label').textContent") == "live":
+                return True
+        except Exception:                    # noqa: BLE001 — not loaded yet
+            pass
+        time.sleep(0.25)
+    return False
+
+
+def focus_window() -> bool:
+    """Bring the window to the front. False if the UI isn't in a window."""
+    window = _window
+    if window is None:
+        return False
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            user32 = ctypes.windll.user32
+            user32.FindWindowW.restype = ctypes.c_void_p
+            try:
+                hwnd = int(window.native.Handle.ToInt64())
+            except Exception:                # noqa: BLE001
+                hwnd = user32.FindWindowW(None, APP_NAME)
+            if not hwnd:
+                return False
+            hwnd = ctypes.c_void_p(hwnd)
+            if user32.IsIconic(hwnd):
+                user32.ShowWindow(hwnd, 9)   # SW_RESTORE; leaves a maximised window alone
+            user32.SetForegroundWindow(hwnd)
+        else:
+            window.show()
+        return True
+    except Exception:                        # noqa: BLE001
+        log.exception("[window] couldn't bring it to the front")
+        return False
+
+
+def show_running(url: str) -> bool:
+    """
+    Ask the copy that's already running to bring its window forward. False if
+    it has no window (its UI is in a browser) or didn't answer.
+    """
+    if sys.platform == "win32":
+        # Windows only lets a process take the foreground if the one that has
+        # it — this one, just started by the user — says so.
+        try:
+            import ctypes
+            ctypes.windll.user32.AllowSetForegroundWindow(-1)     # ASFW_ANY
+        except Exception:                    # noqa: BLE001
+            pass
+    reply = ask_running(url, {"type": "focus_window"}, "focused", timeout=3.0)
+    return bool(reply and reply.get("ok"))
+
+
+def has_console() -> bool:
+    """False when started without a console (pythonw, the launcher's default)."""
+    return sys.stderr is not None
+
+
+def alert(message: str) -> None:
+    """
+    Tell the user something went wrong when there is no console to print it
+    in. With a console, the log line already did.
+    """
+    if has_console() or sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, message, APP_NAME, 0x10)   # MB_ICONERROR
+    except Exception:                        # noqa: BLE001
+        pass
 
 
 # ── exiting ──────────────────────────────────────────────────────────────────

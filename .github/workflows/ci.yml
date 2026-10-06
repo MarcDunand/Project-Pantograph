@@ -49,6 +49,14 @@ jobs:
         if: runner.os == 'Windows'
         run: .\PantographApp\Pantograph.bat --smoke-test
 
+      # The same launcher, this time opening Pantograph's own window: it has to
+      # come up in Edge WebView2, load the page and connect to the engine.
+      # Proves the window library installs and runs on a machine that isn't
+      # the developer's.
+      - name: Window test (Windows)
+        if: runner.os == 'Windows'
+        run: .\PantographApp\Pantograph.bat --window-test
+
       - name: Launcher smoke test (macOS)
         if: runner.os == 'macOS'
         run: ./PantographApp/Pantograph.command --smoke-test

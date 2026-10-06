@@ -62,7 +62,7 @@
         <li>In iDraw OSC on the iPad, set the IP to <b class="num ts-ip">…</b> and the port to <b class="num ts-port">8800</b>.</li>
         <li>The iPad and this computer are on the <b>same Wi-Fi network</b>.</li>
         <li class="os-win">Windows: the Wi-Fi network is set to <b>Private</b>, not Public. Settings → Network &amp; internet → Wi-Fi → your network → Network profile type → Private.</li>
-        <li><span class="os-win">When Windows asked about the firewall, you chose <b>Allow</b>. If you cancelled it: open “Allow an app through Windows Firewall”, press Change settings, and tick <b>Private</b> for python.exe.</span><span class="os-mac">The Mac firewall is off by default. If you turned it on: System Settings → Network → Firewall → Options, and allow Python.</span></li>
+        <li><span class="os-win">When Windows asked about the firewall, you chose <b>Allow</b>. If you cancelled it: open “Allow an app through Windows Firewall”, press Change settings, and tick <b>Private</b> for pythonw.exe (and python.exe, if it is listed).</span><span class="os-mac">The Mac firewall is off by default. If you turned it on: System Settings → Network → Firewall → Options, and allow Python.</span></li>
         <li>Nothing else is using port <b class="num ts-port">8800</b>. If the status says the port is busy, pick another port above and set the same one in iDraw.</li>
         <li>Some <b>school, work, hotel and guest networks</b> stop devices from reaching each other. A phone hotspot is a quick test. The fix is a different network, or Tailscale (see the README).</li>
         <li>Press <b>Restart listener</b>, then draw a stroke. The dot turns green when it arrives.</li>
@@ -354,7 +354,7 @@
 <div class="toast" id="toast" role="status" hidden></div>
 
 <div class="stopped" id="stopped" hidden>
-  <div><h1>Pantograph has stopped</h1><p>The pen is up and the motors are off. You can close this tab.</p></div>
+  <div><h1>Pantograph has stopped</h1><p>The pen is up and the motors are off. You can close this window.</p></div>
 </div>
 
 <script type="module" src="/ui/app.js"></script>

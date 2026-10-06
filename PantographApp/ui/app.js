@@ -1229,7 +1229,7 @@ function renderImport(msg) {
   }
   if (was && !msg.active && msg.outcome) {
     toast({ done: 'Import finished.', cancelled: 'Import cancelled.',
-            failed: 'The import stopped with an error - see the console window.' }[msg.outcome] || 'Import ended.',
+            failed: 'The import stopped with an error - the log has the details (Troubleshoot, Copy diagnostics).' }[msg.outcome] || 'Import ended.',
           msg.outcome === 'failed');
   }
 }

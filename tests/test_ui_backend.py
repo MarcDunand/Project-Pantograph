@@ -250,3 +250,17 @@ def test_a_saved_file_is_the_paper_not_the_tablet(app):
     xs2 = [p[1] / 96 for s in rec2["strokes"] for p in s["points"]]
     ys2 = [p[2] / 96 for s in rec2["strokes"] for p in s["points"]]
     assert abs(min(xs2) - min(xs)) < 0.02 and abs(min(ys2) - min(ys)) < 0.02
+
+
+def test_the_progress_bar_moves_while_the_drawing_is_still_being_fed(app):
+    """
+    Feeding keeps the recording's own timing, so a big drawing is fed for
+    minutes — and the pen is plotting all that time. The page has to hear how
+    far it has got *during* the feed, not only once the feed is over (it sat
+    at "0 / 73193" for six minutes on drawing_dense: Marc, 2026-10-05).
+    """
+    msgs = send(app, {"type": "import_drawing", "recording": long_recording(), "name": "long.svg"},
+                wait=3.0)          # 400 points at 0.05 s apart: 20 s of feeding
+    during = [m for m in of(msgs, "import_progress") if m["active"] and m["phase"] == "plotting"]
+    assert max(m["plotted"] for m in during) > 0, [m["plotted"] for m in during]
+    send(app, {"type": "import_cancel"}, wait=0.5)

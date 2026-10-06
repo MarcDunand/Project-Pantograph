@@ -1,6 +1,6 @@
 [project]
 name = "pantograph"
-version = "0.1.1"
+version = "0.2.0"
 description = "Draw on an iPad, plot live on an AxiDraw."
 readme = "README.md"
 license = "MIT"
@@ -17,6 +17,10 @@ dependencies = [
     # from PantographApp/vendor/ (see the README there for why).
     "axicli",
     "axidrawinternal",
+    # Pantograph's own window (PantographApp/shell.py: run_window). Windows
+    # only for now: elsewhere the import fails and the UI opens in the browser,
+    # as it always did. Drop the marker once the window is tested on a Mac.
+    "pywebview>=6.2.1; sys_platform == 'win32'",
 ]
 
 [dependency-groups]

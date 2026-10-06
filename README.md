@@ -1,8 +1,8 @@
 # Project Pantograph
 
 An artist draws on an iPad with an Apple Pencil; an AxiDraw pen plotter
-recreates the drawing on paper, live, while they draw. A browser page shows
-what is happening and exposes every knob that matters.
+recreates the drawing on paper, live, while they draw. The Pantograph app
+shows what is happening and exposes every knob that matters.
 
 *(The live-drawing pipeline itself is internally called* `draw2axi` *— that
 name shows up throughout the code and the rest of this document.)*
@@ -10,7 +10,7 @@ name shows up throughout the code and the rest of this document.)*
 ```
 Apple Pencil → iPad (iDraw OSC) → Wi-Fi/UDP → Python → AxiDraw
                                        │
-                                       └──→ browser preview (127.0.0.1:5810)
+                                       └──→ the Pantograph window
 ```
 
 Points are streamed to the plotter as they arrive — the pen starts moving
@@ -63,18 +63,24 @@ internet.)
 
 </details>
 
-**What the first launch looks like.** A small black console window opens —
-that window *is* Pantograph running, and closing it quits Pantograph. The
-first time, it downloads Python and the libraries it needs (about 150 MB) into
-its own folder, which takes a minute or two. After that it starts straight
-away, even with no internet. Then a browser tab opens at
-`http://127.0.0.1:5810`: that's the app.
+**What the first launch looks like.** A black console window opens and
+downloads Python and the libraries Pantograph needs (about 150 MB) into its
+own folder, which takes a minute or two. Then the console closes and
+**Pantograph opens in a window of its own**. From then on it starts in a
+second or two, even with no internet; the console only flashes by. Closing the
+Pantograph window quits it: the pen lifts, the motors let go, and the drawing
+is saved.
+
+(If a PC can't show that window — it uses the Edge engine built into Windows
+10 and 11 — Pantograph opens in your browser instead and works the same; use
+its **Quit** button to stop it.)
 
 Nothing is installed system-wide and no admin rights are needed. To update,
 run the command again; your drawings and settings are kept. Drawings are saved
 in `Documents\Pantograph`.
 
-**Windows may ask whether Python can use the network. Choose Allow.** That's
+**Windows may ask whether Python can use the network. Choose Allow.** (Updating
+from a version before 0.2 asks once more.) That's
 how the iPad's strokes get in. If you cancelled it, see
 [Troubleshooting](#nothing-arrives-from-the-ipad).
 
@@ -145,16 +151,17 @@ moving along with you.
 - **File → New canvas** starts a fresh one, offering to save first. **Save
   as…** writes an SVG wherever you choose. **Discard canvas** empties it
   without saving. The canvas is also autosaved while you draw and saved when
-  you quit, so reloading or closing the browser tab loses nothing.
+  you quit, so nothing is lost by closing the window.
 - **File → Import to canvas…** shows a saved drawing in a preview. **Import to
   canvas** plots it and adds it to the canvas, as if you had drawn it yourself
   — you can keep drawing on the iPad meanwhile, and your strokes plot after it.
   While it plots, a progress bar with **Pause** and **Cancel** appears in the
   sidebar.
-- **Closing the console window** (or Ctrl+C in it) also lifts the pen and
-  releases the motors, so the carriage can be pushed home by hand. Closing
-  only the browser tab leaves Pantograph running; open `http://127.0.0.1:5810`
-  to get it back.
+- **Closing the window** does what Quit does: it lifts the pen and releases
+  the motors, so the carriage can be pushed home by hand. Starting Pantograph
+  while it's already running just brings its window forward. (In a browser,
+  closing the tab leaves Pantograph running: use Quit, or open
+  `http://127.0.0.1:5810` to get the page back.)
 
 **No AxiDraw?** Everything works except the moving plotter: the drawing is
 recorded and saved just the same. Copy the SVG to a computer with an AxiDraw
@@ -190,8 +197,9 @@ port filled in. In order:
    **Private**.
 4. **The firewall allows Python.** If you pressed Cancel on the firewall
    question: Start → type `Allow an app through Windows Firewall` → **Change
-   settings** → find **python.exe** and tick **Private**. (No python.exe in
-   the list? Quit Pantograph, start it again, and choose **Allow** this time.)
+   settings** → find **pythonw.exe** (and **python.exe**, if it's there) and
+   tick **Private**. (Neither in the list? Quit Pantograph, start it again,
+   and choose **Allow** this time.)
 5. **Nothing else is using the port.** If the status says the port is busy,
    pick another in the iPad panel and set the same one in iDraw.
 6. **The network may stop devices reaching each other** — see below.
@@ -220,7 +228,8 @@ shows up, and nothing on the computer can change it.
 #### Still nothing?
 
 See what's actually reaching the computer. Quit Pantograph, then in
-PowerShell run:
+PowerShell run this, which starts it in a console with its log on screen
+(any option after `Pantograph.bat` does that):
 
 ```powershell
 & "$env:LOCALAPPDATA\Pantograph\app\PantographApp\Pantograph.bat" --raw-osc
@@ -244,9 +253,16 @@ connection is fine and something else is wrong; send the diagnostics (below).
 - **The one-line command fails**: run it again. A school or work computer may
   block it outright; the download route usually still works there.
 - **The first launch fails**: it needs internet once to fetch Python. The
-  window stays open with the reason and the location of the log.
+  console stays open with the reason.
+- **Nothing appears after the console closes**: a message box normally says
+  why. If there's none, look at `%LOCALAPPDATA%\Pantograph\Logs\pantograph.log`,
+  or start it in a console to watch it: run `Pantograph.bat --verbose` (see
+  "Still nothing?" above for the full path).
+- **It opened in the browser, not its own window**: that PC is missing the
+  Edge WebView2 runtime. Everything works in the browser; to get the window,
+  install "WebView2 Runtime" from Microsoft.
 - **"Couldn't replace the previous version"** when updating: Pantograph is
-  still running. Quit it (close its console window) and run the command again.
+  still running. Quit it (close its window) and run the command again.
 
 ### The plotter doesn't connect
 
@@ -292,7 +308,8 @@ Mac it's **Terminal** (Cmd+Space, type `Terminal`, Enter); on Windows,
    uv run listen_to_idraw.py
    ```
    The first run downloads Python 3.12 and the libraries; later runs start
-   straight away. A browser tab opens at `http://127.0.0.1:5810`.
+   straight away. On Windows Pantograph opens in its own window; on a Mac, in
+   a browser tab at `http://127.0.0.1:5810`.
 
 Then carry on from [step 2 of Get started](#2-get-idraw-osc-on-the-ipad).
 **On a Mac**, macOS may ask whether Terminal (or Python) may find devices on
@@ -304,6 +321,8 @@ can't get through.
 ```
 uv run listen_to_idraw.py --dry-run     # never touch the AxiDraw; log moves instead
 uv run listen_to_idraw.py --raw-osc     # print every OSC message as it arrives
+uv run listen_to_idraw.py --browser     # the UI in a browser tab, not its own window
+uv run listen_to_idraw.py --window-test # open the window, check the page loads, quit
 uv run listen_to_idraw.py --help        # the rest: --verbose, --osc-port, --data-dir, --open…
 uv run pytest                           # the test suite
 uv run python -m pyflakes *.py PantographApp/*.py    # lint, as CI runs it
@@ -320,15 +339,16 @@ uv run python -m pyflakes *.py PantographApp/*.py    # lint, as CI runs it
   repo still seems fine.
 - **Without uv**, in a Python 3.12 virtual environment:
   ```
-  pip install python-osc "websockets>=13" numpy rdp platformdirs PantographApp/vendor/axidrawinternal-3.9.6-py2.py3-none-any.whl PantographApp/vendor/AxiDraw_API_396
+  pip install python-osc "websockets>=13" numpy rdp platformdirs pywebview PantographApp/vendor/axidrawinternal-3.9.6-py2.py3-none-any.whl PantographApp/vendor/AxiDraw_API_396
   python listen_to_idraw.py
   ```
   (The AxiDraw API is vendored in `PantographApp/vendor/`; its README says
   why and how to upgrade it.)
 - **CI** (`.github/workflows/ci.yml`) runs on every push to `main`: lint, the
   tests, then the real launcher with `--smoke-test` (the app starts, checks it
-  can draw and save, and quits), then builds the release zip, installs from it
-  and smoke-tests the installed copy.
+  can draw and save, and quits) and `--window-test` (its own window opens and
+  the page comes up in it), then builds the release zip, installs from it and
+  smoke-tests the installed copy.
 - **Releasing:** set the new version in `pyproject.toml`, run `uv lock`,
   commit and push. Then tag that commit `v` + the version (e.g. `v0.1.1`) and
   push the tag — in GitHub Desktop, History → right-click the commit →
@@ -483,6 +503,17 @@ The page lives in `PantographApp/ui/` (`index.html`, `app.css`, `app.js`) and
 talks to the engine over one WebSocket. When it connects, the engine sends a
 `hello` with everything it needs (settings, the drawing so far, statuses, the
 effect list), so any number of tabs can be open and reloading loses nothing.
+
+**Where it's shown.** On Windows the page opens in Pantograph's own window
+(`shell.run_window`): pywebview hosting it in Edge WebView2, with the app's
+icon and its own taskbar button. It is the same page from the same local
+server, so a browser can still open `127.0.0.1:5810` alongside it. The window
+takes the main thread until it's closed, and closing it runs the same
+`shutdown()` as Quit. File → Import and Save as use the window's own file
+dialogs; in a browser they are tkinter's, on the main thread. If the window
+can't open (no WebView2, the library won't load, `--browser`), the default
+browser is used instead. The launcher starts the app with `pythonw`, so there
+is no console; started with any argument it runs in the console instead.
 
 **Canvas** — four stacked layers: the drawing (each stroke's colour as a grey
 of the same brightness, on white), the stroke in progress, the pen's path after

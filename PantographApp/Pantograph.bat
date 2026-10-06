@@ -10,7 +10,10 @@ rem  Everything it downloads lives under %LOCALAPPDATA%\Pantograph\runtime\ and
 rem  belongs to this app alone: nothing is added to PATH, no system Python is
 rem  touched, and uninstalling is deleting folders.
 rem
-rem  Arguments are passed through to the app (--port, --open FILE, ...).
+rem  Started plain (the shortcut, a double-click), this window closes as soon
+rem  as Pantograph's own window is on its way. Started with any argument
+rem  (--verbose, --raw-osc, --browser, --port N, ...), Pantograph runs here in
+rem  the console instead, with its log on screen.
 rem ===========================================================================
 
 rem -- Where the app is. Always from this file's own location: a double-clicked
@@ -103,13 +106,33 @@ if not exist "%UV%" goto :no_unpack
 :have_uv
 
 rem ---------------------------------------------------------------------------
-rem  Run it.
+rem  Make sure Python and the libraries are in place. The first time this is
+rem  the big download; after that it takes a moment and needs no internet.
 rem    --locked  the libraries are exactly what this release was built against;
 rem              it fails rather than quietly resolving something else.
 rem    --no-dev  skip pytest and playwright. They're for developing Pantograph,
 rem              and playwright alone is a 37 MB download.
 rem ---------------------------------------------------------------------------
-"%UV%" run --locked --no-dev --project "%ROOT%" python "%ROOT%\listen_to_idraw.py" %*
+"%UV%" sync --locked --no-dev --project "%ROOT%"
+if errorlevel 1 goto :no_sync
+
+set "PY=%UV_PROJECT_ENVIRONMENT%\Scripts\python.exe"
+set "PYW=%UV_PROJECT_ENVIRONMENT%\Scripts\pythonw.exe"
+
+rem ---------------------------------------------------------------------------
+rem  Run it.
+rem
+rem  No arguments: start it without a console (pythonw) and let this window
+rem  close. Pantograph then lives in its own window; if anything stops it from
+rem  starting, it says so in a message box, since there's no console to read.
+rem ---------------------------------------------------------------------------
+if not "%~1"=="" goto :in_console
+if not exist "%PYW%" goto :in_console
+start "" /d "%ROOT%" "%PYW%" "%ROOT%\listen_to_idraw.py"
+goto :eof
+
+:in_console
+"%PY%" "%ROOT%\listen_to_idraw.py" %*
 set "RC=%ERRORLEVEL%"
 
 rem -- 0 is a clean quit. Ctrl+C gives 130, or Windows' own STATUS_CONTROL_C_EXIT
@@ -149,6 +172,16 @@ echo   be blocked; a home network or a phone hotspot is the quickest test.
 echo.
 echo   It was fetching:
 echo     %UV_URL%
+echo.
+goto :held
+
+:no_sync
+echo.
+echo   Couldn't set up Python and the libraries.
+echo.
+echo   The first launch needs the internet, to download them (about 150 MB).
+echo   Check the connection and run Pantograph again. The lines above say
+echo   what went wrong.
 echo.
 goto :held
 

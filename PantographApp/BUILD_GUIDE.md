@@ -7,7 +7,13 @@ phase ends with a checkpoint, and nothing moves on until that checkpoint passes.
 **Keep this file current as work lands:** tick boxes, record decisions, add
 gotchas.
 
-**Status (2026-09-27):** Phases −1 to 9 are done. **v0.1.0 is released** on
+**Status (2026-10-05):** Phases −1 to 10 are done. v0.1.1 has been installed
+and run on a second person's Windows PC, and the installed copy has driven the
+iPad and AxiDraw, console-close included. **Phase 11, Pantograph's own window
+(Option 1B), is built** and waits for Marc's look at it and a v0.2.0 release;
+see Phase 11.
+
+**Earlier status (2026-09-27):** Phases −1 to 9 are done. **v0.1.0 is released** on
 GitHub (published 2026-09-27 04:42 UTC; the release workflow passed). Phase 10
 is under way: the README is rewritten (2026-09-27), and what's left is the
 short machine checklist in §6, starting with Marc running the installed copy
@@ -499,8 +505,8 @@ drawing logic is untouched.
         the motors (no drawing moves were sent).
   - [x] Hardware (2026-09-19): plotting as before, and unplugging mid-plot,
         both good.
-  - [ ] Hardware: closing the console mid-plot. The pen lifted but the motors
-        stayed on; the fix awaits a re-check (see the list at the top).
+  - [x] Hardware: closing the console mid-plot. The pen lifted but the motors
+        stayed on; fixed and re-checked 2026-09-20 (see the list at the top).
 - **Still to come from the original list:** `--smoke-test` (Phase 9).
 
 ### Phase 2: One-port server, security, single instance
@@ -629,7 +635,7 @@ follows for reference.
 
 The most important structural change. Read §2 items 1 and 10 first.
 
-- [ ] `recording.py`, the single Python implementation of
+- [x] `recording.py`, the single Python implementation of
       `draw2axi-recording` v1:
   - **`Recorder`** subscribes to the same `point`, `pen_up` and `layer`
     messages the browser receives, and copies the current JS rules:
@@ -648,18 +654,18 @@ The most important structural change. Read §2 items 1 and 10 first.
     `0.2126 R + 0.7152 G + 0.0722 B`, alpha kept); the optional optimized
     and effect layers in one accent colour each. The metadata keeps the
     original colours.
-- [ ] **Autosave:** after each stroke ends (at most once every 2 s), write
+- [x] **Autosave:** after each stroke ends (at most once every 2 s), write
       `autosave.svg` in the drawings folder, atomically (temporary file, then
       `os.replace`). It shows up in the drawings list like any other file.
       There's no restore prompt.
-- [ ] "Clear" becomes **"New drawing"**. It saves the current drawing first if
+- [x] "Clear" becomes **"New drawing"**. It saves the current drawing first if
       it has strokes.
-- [ ] `PantographApp/settings.py`: a JSON file with defaults defined in Python.
+- [x] `PantographApp/settings.py`: a JSON file with defaults defined in Python.
       Unknown keys are ignored and missing ones take the default. It covers
       everything in `localStorage` today (the `axi_*` and `axi_fx_*` keys),
       plus the OSC port and the paper settings. It's applied at startup,
       before any browser connects.
-- [ ] **Paper size and AxiDraw model** replace the hard-coded
+- [x] **Paper size and AxiDraw model** replace the hard-coded
       `PAPER_WIDTH_IN` / `PAPER_HEIGHT_IN`.
   - Presets: Letter, A4, A3, Tabloid, and Custom (inches).
   - The model sets the travel limits. Paper larger than the machine's travel
@@ -668,10 +674,10 @@ The most important structural change. Read §2 items 1 and 10 first.
     and the tilt centre. Find every place that reads the paper constants.
   - Changes are refused while the plot queue isn't empty.
   - Pass the model to pyaxidraw via `ad.options.model`.
-- [ ] Data folders via `platformdirs`. Drawings go to `Documents/Pantograph/`,
+- [x] Data folders via `platformdirs`. Drawings go to `Documents/Pantograph/`,
       which handles a Documents folder redirected by OneDrive; `--data-dir`
       overrides it. Settings, logs and runtime go in the per-user app folders.
-- [ ] `hello` contains: settings, effect specs, the current drawing (all
+- [x] `hello` contains: settings, effect specs, the current drawing (all
       layers), plotter status, lag, the IP list, the OSC port and the version.
 - **Checkpoint:**
   - A reload mid-drawing loses nothing.
@@ -1054,10 +1060,11 @@ Two things found by building it, both now fixed:
 rasterised, since the mark is only lines and two dots and a rasteriser would be
 a dependency.
 
-- [ ] **Checkpoint (Marc):** on a Windows account with no Python or uv, the
+- [x] **Checkpoint (Marc):** on a Windows account with no Python or uv, the
   one-line installer and the click download both work end to end, and the
-  second launch works offline. Now §6 item 1, which Marc is running on his own
-  PC (no second machine for now).
+  second launch works offline. **Passed 2026-10-05 for the one-line route:**
+  v0.1.1 installed and ran on another person's Windows PC, as well as Marc's
+  own. The click download and an offline second launch weren't reported.
   - **2026-09-27, Marc's own PC: the one-line command failed, every time.**
     It printed `iex : The terminator '#>' is missing from the multiline
     comment`, and Windows Security showed **"Trojan:Win32/Commando.A!ml"
@@ -1172,9 +1179,97 @@ The original plan, for reference:
 - [x] A "Developers" section: `uv run listen_to_idraw.py` and
       `uv run pytest`, plus the plain `pip install` route (including
       `pip install PantographApp/vendor/axidrawinternal-3.9.6-py2.py3-none-any.whl PantographApp/vendor/AxiDraw_API_396`).
-- [ ] Run the §6 test list (cut down 2026-09-27 to what only a machine can
-      show).
-- [ ] Add a note to `MEETINGS.html` if relevant.
+- [x] Run the §6 test list (cut down 2026-09-27 to what only a machine can
+      show). Finished 2026-10-05.
+- [x] Add a note to `MEETINGS.html` if relevant.
+
+### Phase 11: Pantograph's own window (Option 1B)
+
+**Built 2026-10-05.** Pantograph opens in a window of its own instead of a
+browser tab, with no console left on screen. Windows only; a Mac still gets
+the browser (below).
+
+**What it is.** `shell.run_window()` shows the same page, from the same local
+server, in pywebview, which hosts it in Edge WebView2 (part of Windows 10 and
+11). Nothing about the page changed, which is what the §7 rules were for.
+
+- **The window owns the main thread** until it's closed. `main()` used to wait
+  there serving file-dialog calls; in window mode that loop never runs.
+- **Closing the window quits**, through the same `shutdown()` as the Quit
+  button. Quit, in turn, sets `_stop_event`, and a thread waiting on it
+  destroys the window.
+- **File dialogs come from the window** (`window.create_file_dialog`, safe
+  from any thread), not tkinter. `run_on_main` gives the call a thread of its
+  own when there's a window, since nothing is serving the main-thread queue.
+- **Falling back to the browser** is automatic and silent: pywebview missing or
+  failing to load, no WebView2 runtime, any exception before the window is
+  shown, or `--browser`. `run_window` returns False and `main()` carries on
+  exactly as before. Without WebView2, pywebview would otherwise use the
+  Internet Explorer engine, which can't run the page; the `initialized` event
+  reports the engine chosen, and returning False from its handler cancels the
+  window before it exists.
+- **A second launch brings the window forward** instead of opening a tab: it
+  sends `focus_window` over the WebSocket. Windows only lets a process take
+  the foreground if the one that has it agrees, so the second launch calls
+  `AllowSetForegroundWindow` first. A copy whose UI is in a browser answers
+  `ok: false` and gets a tab, as before.
+- **Its own taskbar button and icon:** `SetCurrentProcessExplicitAppUserModelID`
+  before the window is made (otherwise it's filed under Python), and
+  `webview.start(icon=…)` with `ui/icon.ico`.
+- **Storage** is private mode with `storage_path` in `runtime/webview`, so the
+  engine's working files sit in the app's own folder and are cleared on exit.
+  The page's `localStorage` is only a mirror of `settings.json`, so nothing is
+  lost.
+
+**The launcher** now runs `uv sync --locked --no-dev`, then:
+- **no arguments** (the shortcut, a double-click): `start "" pythonw
+  listen_to_idraw.py`, and the console closes. With no console there is
+  nowhere to print, so a failure to start shows a message box (`shell.alert`)
+  with the reason and the log's path, and logging skips its console handler
+  (`sys.stdout` is `None` under pythonw).
+- **any argument** (`--verbose`, `--raw-osc`, `--browser`, `--smoke-test`…):
+  the venv's `python.exe` in the console, as before. This is the diagnostics
+  route the README gives.
+
+**New flags:** `--browser` (the UI in the default browser), and
+`--window-test` (open the window, wait for the page to say "live", quit; exit
+0 or 1). `--no-browser` now means no UI at all.
+
+**The dependency is `pywebview; sys_platform == 'win32'`.** On a Mac it would
+pull in pyobjc and open a WKWebView window nobody has tested, so there the
+import fails and the browser opens, exactly as in v0.1. Reviving it for the
+Mac is dropping the marker, then one real-Mac session. On Windows it adds
+pythonnet, clr-loader, cffi, bottle and proxy-tools (seven packages, small).
+
+**Checked on Marc's PC, 2026-10-05,** with every folder redirected into the
+project's `.scratch/`:
+- `--window-test` passes from the dev checkout, through `Pantograph.bat` on a
+  completely fresh runtime (uv, Python and 28 packages fetched), and with no
+  console at all (`start … pythonw`).
+- With the engine forced to `mshtml`, it reports no WebView2 and falls back.
+- A second launch restores the minimised window and exits 0; the first copy
+  keeps running.
+- Closing the window with its X (a real `WM_CLOSE`) shuts down cleanly: exit
+  0, `[shutdown]` in the log, `instance.json` removed.
+- `tests/test_window.py` covers the logic that needs no window; CI runs
+  `--window-test` through the launcher.
+
+**Marc's first look, 2026-10-05 (from the dev checkout):** the taskbar shows
+Pantograph; Save as and Import work through the window's file dialogs; closing
+the window mid-plot lifts the pen and releases the motors. Two things came out
+of it:
+
+- **The icon was invisible on a dark taskbar.** `icon.ico` was the linkage in
+  near-black on transparency, while `icon.svg` (the browser's) had always been
+  white on a dark rounded tile with a blue dot. `make_icon.py` now draws the
+  .ico from the svg's own geometry, tile included, so the mark reads on dark
+  and light taskbars alike and the two icons match. Give it a folder argument
+  and it also writes each size as a PNG to look at.
+- **The import's progress bar sat at 0** (G-63).
+
+- [ ] **Checkpoint (Marc):** after tagging v0.2.0 and updating: the Start-menu
+  launch gives a window and no console, with the new icon; CI's new window
+  step is green.
 
 ---
 
@@ -1226,13 +1321,12 @@ runs its own Python from `%LOCALAPPDATA%\Pantograph\runtime`, a different
 - [x] **Done 2026-09-27 with v0.1.1:** the new one-line command installed it
       on Marc's PC and the app works. Still untested: a PC that has never had
       Python or uv on it, and the download route.
-- [ ] **The install, on Marc's PC** (no second machine for now, so not a
-      truly fresh one). The one-line installer works end to end,
-      Pantograph opens in the browser, and a second launch works with Wi-Fi
-      off. If they're willing, the download route too (the security prompt is
-      the thing to watch). *If it fails:* the console's message and
-      `%LOCALAPPDATA%\Pantograph\Logs\pantograph.log` say why.
-- [ ] **The installed copy on Marc's PC, with the iPad and the AxiDraw.** Start
+- [x] **Done 2026-10-05:** it installed and ran on another person's Windows
+      PC. Not reported, and worth a glance if a user ever hits them: the
+      download route's security prompt, and a second launch with Wi-Fi off.
+- [x] **Passed 2026-10-05 (Marc):** on an interrupt the pen lifts and the
+      motors disengage, from the installed copy.
+- [x] **The installed copy on Marc's PC, with the iPad and the AxiDraw.** Start
       it from the Start menu, not the dev checkout. Windows asks about the
       firewall for the new `python.exe` → **Allow** → iPad strokes arrive →
       the AxiDraw plots them. Then close the console window mid-stroke: the pen
@@ -1266,6 +1360,9 @@ UI in real Safari, and macOS's Local Network prompt (G-24).
 ---
 
 ## 7. Staying ready for 1B (native window)
+
+**1B is built: see Phase 11.** These were the rules that kept it a thin layer,
+and they still hold for anything added to the page.
 
 1. **One seam:** the UI only ever opens via `PantographApp.shell.open_ui(url)`.
    In 1B it tries pywebview, and on any exception falls back to the browser
@@ -1386,6 +1483,12 @@ The known risks, each with its mitigation and phase. Re-check before release.
 | G-55 | A negative margin pulled the bottom ruler across the canvas margin but did nothing for the side one | Its grid column was sized by the unit button, and a grid item sits at its column's start, so there was nothing to pull against. `justify-self: end` anchors it to the column's end first | 5 |
 | G-56 | Tests that pass locally fail on GitHub's slower runner: a check read one counter the moment another ticked, or read two things in two steps while a live broadcast could land between them | Wait for the exact value being asserted, not a proxy for it; read related DOM state in one `page.evaluate`. Page JavaScript runs one task at a time, so nothing interleaves inside a single call | 9 |
 | G-57 | Microsoft Defender kills `powershell -ExecutionPolicy Bypass -c "irm <url> \| iex"` as **Trojan:Win32/Commando.A!ml** (Severe), the documented install command (Marc, 2026-09-27). It's a machine-learning verdict on the process command line; AMSI, the script scanner, rates the same text and the installer clean | The command is now `irm <url> \| iex` typed into PowerShell: no new process, so no command line to judge. The script scanner rates it clean (checked with `AmsiScanString`), and it installs under the default *Restricted* execution policy, which only covers script files. The installer runs in a child scope and throws instead of exiting, since it now runs in the person's own session | 8 |
+| G-58 | Without the WebView2 runtime, pywebview quietly uses the Internet Explorer engine, which can't run the page: a blank or broken window instead of the app | The window's `initialized` event names the engine; anything but `edgechromium` cancels the window and the browser opens. Checked by forcing `PYWEBVIEW_GUI=mshtml` | 11 |
+| G-59 | Started with `pythonw` there is no console: `sys.stdout` is `None`, nothing printed is seen, and a crash at startup is silent | Logging skips the console handler; a failure to start, or an unexpected exception, shows a message box with the log's path; any launcher argument runs the console version | 11 |
+| G-60 | The window takes the main thread, so the loop that served main-thread calls (the tkinter file dialogs) never runs: Import and Save as would hang forever | With a window, dialogs are the window's own and `run_on_main` runs the call on a thread of its own. `tests/test_window.py` pins both | 11 |
+| G-61 | A second launch can't raise the first copy's window: Windows refuses `SetForegroundWindow` from a background process | The second launch, which the user just started and so holds the foreground, calls `AllowSetForegroundWindow` before asking | 11 |
+| G-62 | Each Python at a new path gets its own Windows firewall prompt, and `pythonw.exe` counts as new: existing users are asked once more after updating to 0.2 | README and release notes say so; the in-app checklist names pythonw.exe | 11 |
+| G-63 | The import's progress bar sat at "0 / 73193" for minutes (Marc, 2026-10-05). The pen was plotting, but the page was only told how far it had got once the whole drawing had been *fed*, and feeding keeps the recording's own timing: six minutes for `drawing_dense`. Small test drawings feed in seconds, so every earlier check passed | `_feed_strokes` broadcasts progress every `IMPORT_REPORT_SEC` while it feeds, as `_wait_for_plotter` already did afterwards. `test_the_progress_bar_moves_while_the_drawing_is_still_being_fed` uses a recording that takes 20 s to feed | 6 |
 
 (Resolved and removed: G-25 Windows on ARM, not handled by decision; G-27
 update notices, cut; G-28 OSC threading, done; G-32 lxml builds, covered by

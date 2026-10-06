@@ -1,31 +1,44 @@
 """
-Build PantographApp/ui/icon.ico from the same pantograph drawing as icon.svg.
+Build PantographApp/ui/icon.ico from the same drawing as icon.svg: the
+pantograph linkage in white on a dark rounded tile, with one blue dot.
 
-Windows shortcuts need a .ico, and rasterising an SVG needs a library we don't
-otherwise want. The drawing is only lines and two dots, so this draws it
-directly: supersampled into an RGBA buffer, written as PNG (zlib is stdlib) and
-wrapped in an ICO.
+Windows shortcuts and the app's window need a .ico, and rasterising an SVG
+needs a library we don't otherwise want. The drawing is a rounded square, a
+few lines and two dots, so this draws it directly: supersampled into an RGBA
+buffer, written as PNG (zlib is stdlib) and wrapped in an ICO.
+
+The tile matters. The first version was dark lines on transparency, which
+vanish on a dark taskbar; light lines alone would vanish on a light one. On
+its own tile the mark reads on both.
 
 Run it after changing icon.svg:  uv run PantographApp/deferred/make_icon.py
+Add a folder to also write each size as a PNG there, to look at:
+    uv run PantographApp/deferred/make_icon.py .scratch/icon
 """
 import math
 import struct
+import sys
 import zlib
 from pathlib import Path
 
-# The linkage, in icon.svg's 26 × 20 viewBox.
+# Everything below is icon.svg, in its 32 × 32 viewBox.
+VIEW = 32
+TILE_RADIUS = 7
 SEGMENTS = [
-    (2, 18, 9, 4), (9, 4, 16, 11),            # M2 18 L9 4 L16 11
-    (9, 4, 24, 18),                            # M9 4 L24 18
-    (5.5, 11, 12.5, 11), (12.5, 11, 16, 11), (16, 11, 20, 14.5),
+    (5, 25, 13, 9), (13, 9, 20, 17),           # M5 25 L13 9 L20 17
+    (13, 9, 27, 25),                            # M13 9 L27 25
+    (9, 17, 20, 17), (20, 17, 23.5, 21),        # M9 17 L20 17 L23.5 21
 ]
-DOTS = [(2, 18, 1.4), (24, 18, 1.4)]
-VIEW_W, VIEW_H = 26, 20
-STROKE = 1.6
+STROKE = 2.2
+WHITE_DOT = (5, 25, 1.8)
+BLUE_DOT = (27, 25, 1.8)
+
+TILE = (0x1F, 0x23, 0x28)    # the app's near-black
+WHITE = (0xFF, 0xFF, 0xFF)
+BLUE = (0x1C, 0x7E, 0xD6)
 
 SIZES = (16, 24, 32, 48, 64, 128, 256)
-SS = 4                      # supersampling factor
-INK = (0x1F, 0x23, 0x28)    # the app's near-black, on transparency
+SS = 4                       # supersampling factor
 
 
 def _dist_to_segment(px, py, x1, y1, x2, y2):
@@ -35,54 +48,54 @@ def _dist_to_segment(px, py, x1, y1, x2, y2):
     return math.hypot(px - (x1 + t * dx), py - (y1 + t * dy))
 
 
-def _coverage(size):
-    """Alpha per pixel, by sampling SS×SS points inside each one."""
-    n = size * SS
-    # Fit the viewBox into the square, with a little air around it.
-    scale = min(n / VIEW_W, n / VIEW_H) * 0.86
-    ox = (n - VIEW_W * scale) / 2
-    oy = (n - VIEW_H * scale) / 2
-    half = STROKE * scale / 2
+def _in_tile(x, y):
+    """Inside the rounded square that fills the viewBox."""
+    r = TILE_RADIUS
+    cx = min(max(x, r), VIEW - r)
+    cy = min(max(y, r), VIEW - r)
+    return 0 <= x <= VIEW and 0 <= y <= VIEW and math.hypot(x - cx, y - cy) <= r
 
-    hit = bytearray(n * n)
-    for sy in range(n):
-        uy = (sy + 0.5 - oy) / scale
-        for sx in range(n):
-            ux = (sx + 0.5 - ox) / scale
-            on = False
-            for (x1, y1, x2, y2) in SEGMENTS:
-                if _dist_to_segment(ux, uy, x1, y1, x2, y2) * scale <= half:
-                    on = True
-                    break
-            if not on:
-                for (cx, cy, r) in DOTS:
-                    if math.hypot(ux - cx, uy - cy) <= r:
-                        on = True
-                        break
-            if on:
-                hit[sy * n + sx] = 1
 
-    alpha = bytearray(size * size)
+def _sample(x, y):
+    """The colour at one point of the drawing, topmost shape first; None is transparent."""
+    if math.hypot(x - BLUE_DOT[0], y - BLUE_DOT[1]) <= BLUE_DOT[2]:
+        return BLUE
+    if math.hypot(x - WHITE_DOT[0], y - WHITE_DOT[1]) <= WHITE_DOT[2]:
+        return WHITE
+    for seg in SEGMENTS:
+        if _dist_to_segment(x, y, *seg) <= STROKE / 2:
+            return WHITE
+    return TILE if _in_tile(x, y) else None
+
+
+def _render(size):
+    """RGBA bytes for one size, each pixel the average of SS × SS samples."""
+    step = VIEW / (size * SS)
     per = SS * SS
-    for y in range(size):
-        for x in range(size):
-            c = 0
+    out = bytearray()
+    for py in range(size):
+        for px in range(size):
+            r = g = b = hits = 0
             for j in range(SS):
-                row = (y * SS + j) * n + x * SS
+                y = (py * SS + j + 0.5) * step
                 for i in range(SS):
-                    c += hit[row + i]
-            alpha[y * size + x] = (c * 255) // per
-    return alpha
+                    c = _sample((px * SS + i + 0.5) * step, y)
+                    if c is not None:
+                        r += c[0]
+                        g += c[1]
+                        b += c[2]
+                        hits += 1
+            # Straight (not premultiplied) alpha: colour is the average of the
+            # samples that landed on the drawing, alpha is how many did.
+            out += bytes((r // hits, g // hits, b // hits, hits * 255 // per) if hits else (0, 0, 0, 0))
+    return bytes(out)
 
 
-def _png(size, alpha):
-    r, g, b = INK
+def _png(size, rgba):
     raw = bytearray()
     for y in range(size):
         raw.append(0)                       # filter: none
-        for x in range(size):
-            a = alpha[y * size + x]
-            raw += bytes((r, g, b, a))
+        raw += rgba[y * size * 4:(y + 1) * size * 4]
 
     def chunk(tag, data):
         return (struct.pack(">I", len(data)) + tag + data
@@ -95,7 +108,7 @@ def _png(size, alpha):
 
 
 def main():
-    images = [(s, _png(s, _coverage(s))) for s in SIZES]
+    images = [(s, _png(s, _render(s))) for s in SIZES]
 
     header = struct.pack("<HHH", 0, 1, len(images))
     entries, blobs = b"", b""
@@ -109,6 +122,13 @@ def main():
     out = Path(__file__).resolve().parents[1] / "ui" / "icon.ico"
     out.write_bytes(header + entries + blobs)
     print(f"wrote {out} ({out.stat().st_size:,} bytes, {len(images)} sizes)")
+
+    if len(sys.argv) > 1:                    # previews, to check by eye
+        folder = Path(sys.argv[1])
+        folder.mkdir(parents=True, exist_ok=True)
+        for size, data in images:
+            (folder / f"icon-{size}.png").write_bytes(data)
+        print(f"wrote {len(images)} PNG previews to {folder}")
 
 
 if __name__ == "__main__":
