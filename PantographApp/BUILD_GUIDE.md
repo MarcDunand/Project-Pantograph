@@ -13,8 +13,9 @@ with no console, and has been run on Marc's PC and one other person's, with
 the iPad and AxiDraw.
 
 What's left, none of it blocking:
-- **Pressure-lag fix:** written, waiting for an Apple Pencil to test with
-  (Phase −1). The only unticked box in this file.
+- **Pressure-lag fix:** in the code since 2026-10-10, not yet released, and
+  not yet confirmed with an Apple Pencil (Phase −1). The only unticked box in
+  this file.
 - **A Mac package:** needs a Mac. The launcher and installer are specified in
   Phase 8, CI has a commented slot for `macos-latest`, and the window is one
   dependency marker away (Phase 11).
@@ -28,6 +29,12 @@ Release history:
 - **v0.2.0**, 2026-10-05 (published 2026-10-06 03:15 UTC): Pantograph's own
   window (Phase 11), a light-on-dark icon, and the import progress bar fix
   (G-63).
+- **v0.2.1**, 2026-10-10: never built. The tag was made without the version
+  bump, and the hand-made release page had no files, which broke the install
+  command until the page was deleted (G-64). Skipped.
+- **v0.2.2**: version set 2026-10-10, waiting for the commit and tag. Use
+  without an iPad, the warning when nothing is connected, and the
+  pressure-lag fix.
 
 **Hardware checks.** These can't be verified without the iPad and AxiDraw.
 Marc's session on 2026-09-19 covered the first five:
@@ -274,8 +281,8 @@ points to the phase that handles it.
     pyaxidraw mode `"res_home2"`, which doesn't exist, then logged success.
     **Fixed**; see the hardware checks at the top.
 13. **Pressure lags one point.** iDraw sends `/x`, `/y`, then `/pressure`,
-    and a point is emitted when `/y` arrives. **A fix exists but is deferred**
-    until a Pencil is available (Phase −1).
+    and a point was emitted when `/y` arrived. **Fixed 2026-10-10** (Phase −1);
+    a check with a real Pencil is still owed.
 14. **Found in Phase 3: the replay tag was never sent.** The Aug 28 commit
     ("fixed … redrawing a prerecorded SVG doubles that drawing") added
     `_in_replay()` and page code that skips points tagged `replay`, but
@@ -339,7 +346,7 @@ iPad (iDraw OSC) ──UDP :8800──► listen_to_idraw.py  (engine, backgroun
   .github/workflows/ NEW  CI on Windows + macOS; release zip
   PantographApp/
     BUILD_GUIDE.md     this file
-    deferred/          saved patches waiting on hardware (pressure-lag-fix.patch)
+    deferred/          things kept out of the release zip (make_icon.py)
     vendor/      NEW   pyaxidraw 3.9.6 (GPL): AxiDraw_API_396/ + the axidrawinternal
                        wheel, split apart so uv.lock stays portable (see its README)
     Pantograph.bat     Windows launcher
@@ -387,21 +394,30 @@ Done first, at Marc's request. Confirmed on the iPad and AxiDraw, in the plain
       (§3.1, §3.4), and the `dot_healer.py` docstring.
 - [x] Simulations against the real handlers pass, and Marc confirmed it on
       hardware.
-- [ ] **Pressure-lag fix: DEFERRED** (written and reverted 2026-09-19, because
-      there's no Apple Pencil on hand to test pressure).
+- [ ] **Pressure-lag fix: APPLIED 2026-10-10, Pencil check still owed.**
+      Written and reverted 2026-09-19 (no Apple Pencil on hand), then put back
+      by hand on Marc's say-so, since a friend with a Pencil can test it.
   - **The bug:** iDraw sends `/x`, `/y`, `/pressure`, and a point is emitted
     on `/y`, so every point gets the *previous* point's pressure, and a
     stroke's first point gets the last pressure of the stroke before.
   - **The fix:** `/y` marks the point pending, and `/pressure` emits it
-    (`_flush_point`). If a `/pressure` goes missing, the next `/x` or state
-    block emits it anyway. It passed simulation in iDraw's real order.
-  - **Saved as `PantographApp/deferred/pressure-lag-fix.patch`**, covering the
-    code, README and AGENTS.md. To reapply:
-    `git apply PantographApp/deferred/pressure-lag-fix.patch`. Then test with
-    the Pencil and variable pressure on: pen depth should follow the Pencil,
-    with no heavy or light blip at the start of a stroke (draw a light stroke
-    right after a hard one). Delete the patch once it's applied. If Phase 1
-    has reorganized the code by then, apply it by hand; it's small.
+    (`_flush_point`). If a `/pressure` goes missing, whatever comes next
+    emits the point anyway with the last reading: `/aspectX`, the next `/x`,
+    or a state block. So the worst case is the old behaviour, never a lost or
+    late point. (`/aspectX` is new since the September patch: without it a
+    lost `/pressure` on a stroke's last point held that point back until the
+    next stroke.)
+  - **Tested without a Pencil:** four tests in `tests/test_strokes.py` drive
+    the real handlers in iDraw's order: each point gets its own pressure, a
+    stroke doesn't start at the last one's, a tap gets its own, and a lost
+    `/pressure` loses no point. The saved patch no longer applied and is
+    deleted.
+  - **What a Pencil still has to show:** that iDraw really sends `/pressure`
+    right after `/y` with a live reading in it. That order comes from Marc's
+    `--raw-osc` captures. The check needs no AxiDraw: with variable pressure
+    on, draw a hard stroke, then a light one, then tap; save, and send the
+    SVG. The pressures in it are what would be plotted. Plotting that file on
+    Marc's AxiDraw covers the pen itself.
 - **Known consequence:** iDraw sends nothing when the Pencil lifts, so the
   *latest* stroke stays open until the next one starts. Its pen is already
   rested, but the stroke-end effects (zigzag's last corner, pressure hatch,
@@ -1304,6 +1320,8 @@ of it:
   be imported" where it used to show the parser's "no <metadata> recording
   found". **Plotting arbitrary SVGs would be a new feature** (reading paths,
   curves and transforms into strokes) and has not been built or asked for.
+- **Pressure-lag fix applied** (2026-10-10; see Phase −1). Each point is
+  plotted and saved with its own pressure, not the previous point's.
 - **Release notes on GitHub were a narrow column:** the release page treats a
   line break inside a paragraph as a real one. The template in `release.yml`
   is one line per paragraph now. The v0.2.0 page itself keeps its old text
@@ -1537,6 +1555,7 @@ The known risks, each with its mitigation and phase. Re-check before release.
 | G-61 | A second launch can't raise the first copy's window: Windows refuses `SetForegroundWindow` from a background process | The second launch, which the user just started and so holds the foreground, calls `AllowSetForegroundWindow` before asking | 11 |
 | G-62 | Each Python at a new path gets its own Windows firewall prompt, and `pythonw.exe` counts as new: existing users are asked once more after updating to 0.2 | README and release notes say so; the in-app checklist names pythonw.exe | 11 |
 | G-63 | The import's progress bar sat at "0 / 73193" for minutes (Marc, 2026-10-05). The pen was plotting, but the page was only told how far it had got once the whole drawing had been *fed*, and feeding keeps the recording's own timing: six minutes for `drawing_dense`. Small test drawings feed in seconds, so every earlier check passed | `_feed_strokes` broadcasts progress every `IMPORT_REPORT_SEC` while it feeds, as `_wait_for_plotter` already did afterwards. `test_the_progress_bar_moves_while_the_drawing_is_still_being_fed` uses a recording that takes 20 s to feed | 6 |
+| G-64 | The install command returned "404 Not Found" for everyone (2026-10-10). Tag `v0.2.1` was pushed while `pyproject.toml` still said 0.2.0, so the Release workflow stopped at its version check and attached nothing. A release page for the tag was then made by hand on GitHub. GitHub counts the newest release page as "latest", and the install command fetches `releases/latest/download/install-windows.ps1`, which that page didn't have | Delete the empty release page and "latest" falls back to the last real one. **Never make a release page by hand:** set the version, commit, tag, and let the workflow publish. A new push never changes an existing tag or release; the tag stays on the commit it was made on | 9 |
 
 (Resolved and removed: G-25 Windows on ARM, not handled by decision; G-27
 update notices, cut; G-28 OSC threading, done; G-32 lxml builds, covered by
@@ -1564,6 +1583,7 @@ No questions are open. Recorded answers, all folded into §1:
 | 2026-09-19 | Scope | Demo: prefer saving time over polish |
 | 2026-09-19 | Install routes | Both routes on both platforms; command line primary; README shows them side by side |
 | 2026-09-19 | Pressure lag | Fix it, but deferred until a Pencil is available; patch saved |
+| 2026-10-10 | Pressure lag | Applied without waiting for the Pencil: it falls back to the old behaviour if iDraw's order differs, and a friend's Pencil can confirm it without an AxiDraw |
 | 2026-09-19 | pyaxidraw | Vendored in the repo (decided under the scope rule: simpler than a hosted download); split into package + wheel to keep `uv.lock` portable |
 | 2026-09-19 | Live drawing during a replay | Ignored until the replay ends or is cancelled (Phase 6; the plan left it open) |
 | 2026-09-20 | Motors | A Disengage / Re-engage toggle, independent of the connection; home only moves when **Set as home** is pressed |

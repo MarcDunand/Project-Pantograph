@@ -180,10 +180,55 @@ def test_finger_tap_is_a_dot(engine):
 
 
 def test_glitch_inside_real_pressure_is_interpolated(engine):
-    # Points are emitted on /y, before their /pressure arrives, so each point
-    # carries the previous burst's pressure (the deferred pressure-lag fix).
     _stroke(engine, [2.0, 2.0, 1.0, 1.0, 2.0, 2.0, 2.0])
     assert 0.5 not in _pressures(engine, "lineto")
+
+
+# ── each point carries its own pressure ──────────────────────────────────────
+
+def _norm(L, raw):
+    return round(raw / L.OSC_PRESSURE_MAX, 3)
+
+
+def test_every_point_is_plotted_with_its_own_pressure(engine):
+    """A point is emitted when its /pressure arrives, not on /y before it."""
+    raws = [0.5, 2.0, 3.0, 4.0, 2.5]
+    _stroke(engine, raws)
+    assert _pressures(engine, "pendown") == [_norm(engine, raws[0])]
+    assert _pressures(engine, "lineto") == [_norm(engine, r) for r in raws[1:]]
+    # The page and the saved drawing get the same reading.
+    assert [m["pressureRaw"] for m in engine.sent if m["type"] == "point"] == raws
+
+
+def test_a_stroke_does_not_start_at_the_last_strokes_pressure(engine):
+    _stroke(engine, [4.0, 4.0, 4.0])                # ends hard
+    engine._plot_deque.clear()
+    _stroke(engine, [0.5, 0.6, 0.7])                # starts light
+    assert _pressures(engine, "pendown") == [_norm(engine, 0.5)]
+
+
+def test_a_tap_is_plotted_with_its_own_pressure(engine):
+    _stroke(engine, [4.0, 4.0, 4.0])
+    engine._plot_deque.clear()
+    _stroke(engine, [0.5])
+    assert _pressures(engine, "pendown") == [_norm(engine, 0.5)] and "dot_dwell" in kinds(engine)
+
+
+def test_a_point_whose_pressure_never_arrives_is_still_plotted(engine):
+    """A lost /pressure costs that point its reading, never the point itself."""
+    L = engine
+    send_block(L)
+    send_point(L, 100, 400, 2.0)
+    L._handle_x("/x", 105); L._handle_y("/y", 400)      # its /pressure is lost
+    L._handle_aspect("/aspectX", 0.0)                   # the next message emits it
+    assert len(_pressures(L, "lineto")) == 1
+    L._handle_x("/x", 110); L._handle_y("/y", 400)      # lost again, and no /aspect either
+    L._handle_x("/x", 115)                              # the next point's /x emits it
+    assert len(_pressures(L, "lineto")) == 2
+    L._handle_y("/y", 400)                              # the last point, pressure lost
+    send_block(L)                                       # the next stroke's block emits it
+    assert len(_pressures(L, "lineto")) == 3 and kinds(L)[-1] == "penup"
+    assert len([m for m in L.sent if m["type"] == "point"]) == 4
 
 
 def test_long_placeholder_run_inside_real_pressure_plots_at_half(engine):

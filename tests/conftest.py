@@ -36,6 +36,7 @@ def engine(monkeypatch):
     L._pen_clock_wall = None
     L._pen_clock_marks.clear()
     L._spurious_run = 0
+    L._point_pending = False
     L._current_lag_sec = 0.0
     L._effects_only = False
     L.state.update(x=None, y=None, pressure=1.0, tool="pen", canvasWidth=440.0,

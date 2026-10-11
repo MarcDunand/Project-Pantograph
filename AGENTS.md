@@ -63,8 +63,11 @@ In the iDraw OSC app, set:
 derived from them and are ignored in favor of raw x/y.
 
 The burst order observed is: `/x` → `/y` → `/pressure` → `/aspectX` →
-`/aspectY`. The code emits a point on each `/y` arrival (treating it as the
-last meaningful field in the burst).
+`/aspectY`. The code marks a point pending on `/y` and emits it when that
+point's `/pressure` arrives, so each point carries its own pressure. Until
+2026-10-10 it emitted on `/y`, which gave every point the previous point's
+pressure. If a `/pressure` is ever missing, the next `/aspectX`, `/x` or state
+block emits the pending point anyway.
 
 **Pressure quirks.** Raw pressure runs 0 → `OSC_PRESSURE_MAX` (4.166666507720947,
 Apple Pencil at full press); finger input reports a constant value. iDraw also

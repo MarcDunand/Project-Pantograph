@@ -484,7 +484,10 @@ aggressiveness for a predictable ceiling.
 
 ### Pressure
 
-Raw iDraw pressure is normalised by `OSC_PRESSURE_MAX` (≈4.167). With **variable
+iDraw sends each point as `/x`, `/y`, `/pressure`, so a point is emitted when
+its `/pressure` arrives and carries its own reading. (If a `/pressure` is ever
+lost, the next message emits the point with the last reading seen.) Raw iDraw
+pressure is normalised by `OSC_PRESSURE_MAX` (≈4.167). With **variable
 pressure** on, normalised pressure maps between the min and max pen-down servo
 positions, updated mid-stroke at the configured rate.
 

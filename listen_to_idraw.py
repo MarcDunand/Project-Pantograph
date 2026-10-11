@@ -1376,6 +1376,7 @@ def _state_block_seen():
     must end before the block's new colour/width/tool land in `state`). The first
     message of a block does the work; the rest find no stroke open.
     """
+    _flush_point()                   # a point still waiting on its /pressure belongs to the old stroke
     if _live_cur is not None:
         _end_live_capture()          # a stroke drawn while an import is feeding
     if state["_pen_is_down"]:
@@ -1498,7 +1499,7 @@ def _flush_pending_024(next_pressure: float, from_pressure: float | None = None)
 
 def _emit_point():
     """
-    Fires on every /y message (the last field in each OSC burst).
+    Fires once per point, when its burst is complete (see _flush_point).
     Streams plot commands to the deque in real time and broadcasts to the preview.
 
     Two optimisation layers fire here:
@@ -1645,13 +1646,35 @@ def _point_msg(x: float, y: float, pressure_norm: float, now: float) -> dict:
     }
 
 
+# iDraw sends each point as /x, /y, /pressure (then /aspectX, /aspectY). A point
+# is only complete once its /pressure arrives: emitting on /y, as this used to,
+# gave every point the *previous* point's pressure, and a stroke's first point
+# the last pressure of the stroke before. So /y marks the point pending and
+# /pressure emits it.
+#
+# Should a /pressure go missing, whatever comes next emits the pending point
+# anyway, with the last pressure seen: /aspectX, the next /x, or a state block.
+# No point is lost or held back, and the worst case is the old behaviour.
+_point_pending = False
+
+
+def _flush_point():
+    """Emit the pending point, if there is one."""
+    global _point_pending
+    if _point_pending:
+        _point_pending = False
+        _emit_point()
+
+
 def _handle_x(address, *args):
     if _show_raw_osc: _log_raw(address, *args)
+    _flush_point()      # a previous point still waiting means its /pressure never came
     state["x"] = args[0]
 
 def _handle_pressure(address, *args):
     if _show_raw_osc: _log_raw(address, *args)
     state["pressure"] = args[0]
+    _flush_point()
 
 # Every handler for a state-block field calls _state_block_seen() first — see
 # STROKE BOUNDARIES.
@@ -1688,11 +1711,13 @@ def _handle_eraser_width(address, *args):
 
 def _handle_aspect(address, *args):
     if _show_raw_osc: _log_raw(address, *args)
+    _flush_point()      # these follow /pressure, so a point still waiting has lost its own
 
 def _handle_y(address, *args):
+    global _point_pending
     if _show_raw_osc: _log_raw(address, *args)
     state["y"] = args[0]
-    _emit_point()   # /y is always the last field per burst
+    _point_pending = True   # emitted when this point's /pressure arrives
 
 def _handle_canvas_width(address, *args):
     if _show_raw_osc: _log_raw(address, *args)
