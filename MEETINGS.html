@@ -409,6 +409,21 @@
       </div>
     </div>
 
+    <!-- Work session: use without an iPad, pressure fix, v0.2.2 -->
+    <div class="entry">
+      <div class="card">
+        <span class="badge">Work session</span>
+        <span class="date">October 10, 2026</span>
+        <h2>A small release: v0.2.2</h2>
+        <p>Two improvements went out as <strong>version 0.2.2</strong>.</p>
+        <ul>
+          <li><strong>Use without an iPad:</strong> someone with only an AxiDraw can now skip the iPad step and plot a drawing saved from Pantograph. Skipping both the iPad and the plotter shows a warning that there is nothing left to do.</li>
+          <li><strong>Pressure now matches the Pencil exactly.</strong> Each point used to be drawn with the pressure of the point before it. A friend's Apple Pencil confirmed the fix reads the pressure in the right order.</li>
+          <li>A lesson on releasing: the release page on GitHub is made automatically once a version is tagged; making one by hand briefly broke the install command.</li>
+        </ul>
+      </div>
+    </div>
+
   </div><!-- /timeline -->
 
   <section class="status">
@@ -419,10 +434,10 @@
       <li>A post-processing framework (<code>postprocess.py</code>) exists with perpendicular pressure lines, mirror, and centerline-width-from-pressure effects, plus SVG upload/replay and terminal-log reconstruction.</li>
       <li>Two command-line tools for finished drawings stay outside the app: <code>svg_transform.py</code> (flip, minimum width) and <code>dot_healer.py</code> (rejoin strokes a fast pen tore into dots).</li>
       <li>The same program now runs without an AxiDraw (the separate <code>iDraw_to_svg/</code> version was removed on September 18): it records drawings to plottable SVGs for plotting later.</li>
-      <li><strong>The Pantograph app is released for Windows</strong> (v0.2.0, October 5): a one-line install, no Python needed, and it opens in its own window. Tested on two PCs. Mac users run it from source, in the browser, for now. Details in <a href="PantographApp/BUILD_GUIDE.md">the build guide</a>.</li>
+      <li><strong>The Pantograph app is released for Windows</strong> (v0.2.2, October 10): a one-line install, no Python needed, and it opens in its own window. Tested on two PCs. Mac users run it from source, in the browser, for now. Details in <a href="PantographApp/BUILD_GUIDE.md">the build guide</a>.</li>
       <li>Both replay bugs are <strong>fixed</strong> — the mid-plot stop (thread race) and the double-plot re-record.</li>
       <li><strong>Demoed live on video:</strong> Gina drawing while the AxiDraw concurrently recreated the drawing on paper.</li>
-      <li><span class="open"><strong>Known open items:</strong></span> a Mac package, once there's a Mac to test on; the pressure-lag fix, waiting on a Pencil; preview rendering quality (smoothing) remains a longer-term want from the early plan.</li>
+      <li><span class="open"><strong>Known open items:</strong></span> a Mac package, once there's a Mac to test on; preview rendering quality (smoothing) remains a longer-term want from the early plan.</li>
     </ul>
   </section>
 

@@ -7,15 +7,12 @@ phase ends with a checkpoint, and nothing moves on until that checkpoint passes.
 **Keep this file current as work lands:** tick boxes, record decisions, add
 gotchas.
 
-**Status (2026-10-05): every phase is done, and v0.2.0 is released for
-Windows.** Pantograph installs with one command, opens in a window of its own
+**Status (2026-10-10): every phase is done, every box in this file is ticked,
+and v0.2.2 is released for Windows.** Pantograph installs with one command, opens in a window of its own
 with no console, and has been run on Marc's PC and one other person's, with
 the iPad and AxiDraw.
 
 What's left, none of it blocking:
-- **Pressure-lag fix:** in the code since 2026-10-10, not yet released, and
-  not yet confirmed with an Apple Pencil (Phase −1). The only unticked box in
-  this file.
 - **A Mac package:** needs a Mac. The launcher and installer are specified in
   Phase 8, CI has a commented slot for `macos-latest`, and the window is one
   dependency marker away (Phase 11).
@@ -32,9 +29,11 @@ Release history:
 - **v0.2.1**, 2026-10-10: never built. The tag was made without the version
   bump, and the hand-made release page had no files, which broke the install
   command until the page was deleted (G-64). Skipped.
-- **v0.2.2**: version set 2026-10-10, waiting for the commit and tag. Use
-  without an iPad, the warning when nothing is connected, and the
-  pressure-lag fix.
+- **v0.2.2**, 2026-10-10 (published 2026-10-11 00:59 UTC): use without an
+  iPad, the warning when nothing is connected, and the pressure-lag fix
+  (confirmed with a Pencil the same day). A release page was made by hand while the
+  workflow was still running; the workflow filled it in when it finished, so
+  the install command was only down for those two minutes.
 
 **Hardware checks.** These can't be verified without the iPad and AxiDraw.
 Marc's session on 2026-09-19 covered the first five:
@@ -281,8 +280,8 @@ points to the phase that handles it.
     pyaxidraw mode `"res_home2"`, which doesn't exist, then logged success.
     **Fixed**; see the hardware checks at the top.
 13. **Pressure lags one point.** iDraw sends `/x`, `/y`, then `/pressure`,
-    and a point was emitted when `/y` arrived. **Fixed 2026-10-10** (Phase −1);
-    a check with a real Pencil is still owed.
+    and a point was emitted when `/y` arrived. **Fixed 2026-10-10** (Phase −1),
+    and the message order confirmed from a real Pencil the same day.
 14. **Found in Phase 3: the replay tag was never sent.** The Aug 28 commit
     ("fixed … redrawing a prerecorded SVG doubles that drawing") added
     `_in_replay()` and page code that skips points tagged `replay`, but
@@ -394,7 +393,8 @@ Done first, at Marc's request. Confirmed on the iPad and AxiDraw, in the plain
       (§3.1, §3.4), and the `dot_healer.py` docstring.
 - [x] Simulations against the real handlers pass, and Marc confirmed it on
       hardware.
-- [ ] **Pressure-lag fix: APPLIED 2026-10-10, Pencil check still owed.**
+- [x] **Pressure-lag fix: applied 2026-10-10, released in v0.2.2, and the
+      message order confirmed with a Pencil the same day.**
       Written and reverted 2026-09-19 (no Apple Pencil on hand), then put back
       by hand on Marc's say-so, since a friend with a Pencil can test it.
   - **The bug:** iDraw sends `/x`, `/y`, `/pressure`, and a point is emitted
@@ -418,6 +418,16 @@ Done first, at Marc's request. Confirmed on the iPad and AxiDraw, in the plain
     on, draw a hard stroke, then a light one, then tap; save, and send the
     SVG. The pressures in it are what would be plotted. Plotting that file on
     Marc's AxiDraw covers the pen itself.
+  - **Confirmed 2026-10-10** from a `--raw-osc` capture by Marc's friend, with
+    an Apple Pencil and no AxiDraw: several hundred points, every one sent as
+    `/x`, `/y`, `/pressure`, `/aspectX`, `/aspectY`, with the pressure climbing
+    smoothly from about 1.47 to 2.18. The capture also shows **messages do go
+    missing**, three at a time: once a point arrived as `/x`, `/y` with no
+    `/pressure` or `/aspect` after it, and once a lone `/aspectX`, `/aspectY`
+    pair arrived with no point before it. Both are the cases the fallbacks
+    cover: the first point is emitted by the next `/x` with the last reading,
+    and the second does nothing. Not checked: pen depth on an AxiDraw with the
+    fix, which runs through code the fix didn't touch.
 - **Known consequence:** iDraw sends nothing when the Pencil lifts, so the
   *latest* stroke stays open until the next one starts. Its pen is already
   rested, but the stroke-end effects (zigzag's last corner, pressure hatch,
