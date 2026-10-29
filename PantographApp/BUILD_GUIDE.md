@@ -1132,7 +1132,8 @@ every step run by hand on Windows first.
 
 `.github/workflows/release.yml` — on a `v*` tag:
 - refuses to build unless the tag matches `pyproject.toml`'s version, so a tag
-  can't ship a build that reports a different number;
+  can't ship a build that reports a different number (and the lock must match
+  too: run `uv lock` after changing the version, G-65);
 - runs the tests, builds the zip, installs from it and smoke-tests it, then
   publishes the zip and `install-windows.ps1` with install instructions.
 
@@ -1660,6 +1661,7 @@ The known risks, each with its mitigation and phase. Re-check before release.
 | G-62 | Each Python at a new path gets its own Windows firewall prompt, and `pythonw.exe` counts as new: existing users are asked once more after updating to 0.2 | README and release notes say so; the in-app checklist names pythonw.exe | 11 |
 | G-63 | The import's progress bar sat at "0 / 73193" for minutes (Marc, 2026-10-05). The pen was plotting, but the page was only told how far it had got once the whole drawing had been *fed*, and feeding keeps the recording's own timing: six minutes for `drawing_dense`. Small test drawings feed in seconds, so every earlier check passed | `_feed_strokes` broadcasts progress every `IMPORT_REPORT_SEC` while it feeds, as `_wait_for_plotter` already did afterwards. `test_the_progress_bar_moves_while_the_drawing_is_still_being_fed` uses a recording that takes 20 s to feed | 6 |
 | G-64 | The install command returned "404 Not Found" for everyone (2026-10-10). Tag `v0.2.1` was pushed while `pyproject.toml` still said 0.2.0, so the Release workflow stopped at its version check and attached nothing. A release page for the tag was then made by hand on GitHub. GitHub counts the newest release page as "latest", and the install command fetches `releases/latest/download/install-windows.ps1`, which that page didn't have | Delete the empty release page and "latest" falls back to the last real one. **Never make a release page by hand:** set the version, commit, tag, and let the workflow publish. A new push never changes an existing tag or release; the tag stays on the commit it was made on | 9 |
+| G-65 | Release v0.3.2 and CI both failed at **Install** (`uv sync --locked`) before any test ran (2026-10-28). `version` in `pyproject.toml` went 0.2.2 → 0.3.2, but `uv.lock` records the project's own version too, so the lock no longer matched and `--locked` refused | **After changing the version, run `uv lock`** and commit `uv.lock` with `pyproject.toml` (a one-line change). The installed app's launcher runs the same locked install, so a stale lock would break every user's install, not just CI | 9 |
 
 (Resolved and removed: G-25 Windows on ARM, not handled by decision; G-27
 update notices, cut; G-28 OSC threading, done; G-32 lxml builds, covered by
