@@ -47,7 +47,7 @@ import layout
 import postprocess
 import preview
 import recording
-from PantographApp import shell
+from PantographApp import custom_effects, shell
 
 # Everything goes through this logger: INFO and up reach the console, DEBUG
 # (every point and plotter move) only with --verbose. PantographApp.shell sets
@@ -95,6 +95,16 @@ AXIDRAW_MODELS = {
 # taken back out of the queue when the plotter has not reached it yet, or the
 # pen goes back down where it left off — either way the line stays unbroken.
 PEN_REST_SEC = 0.15
+
+# iDraw sends nothing when the Pencil lifts, so without this the last stroke
+# would stay open until the next one began — and the effects that draw at a
+# stroke's end (after_stroke) would wait with it, then land on whatever paper
+# is in the machine by then, a fresh page after New drawing. After this long
+# with no new point the stroke is taken to be over and ended for real. It sits
+# far above the gaps that tore fast strokes when timing alone split them
+# (PEN_UP_TIMEOUT_SEC was 0.15 s); a point arriving after it, with no state
+# block between, starts a new stroke where the last one left off.
+STROKE_END_SEC = 1.0
 
 # Minimum distance between consecutive points sent to the plotter, in paper inches.
 # Points that are closer together than this are skipped to avoid flooding the
@@ -354,6 +364,44 @@ def _rebuild_effect_chain() -> None:
         _effect_chain = postprocess.build_chain(_EFFECT_SWITCHES, _effect_params)
 
 
+def _sync_effect_registry(reset: str | None = None) -> None:
+    """
+    Bring the switches and knobs in line with postprocess.REGISTRY after an
+    effect was added or removed (see PantographApp/custom_effects.py). A new
+    effect starts off; `reset` names one whose code changed, whose knobs go
+    back to its new defaults.
+    """
+    specs = {s["name"]: s for s in postprocess.effect_specs()}
+    with _plot_lock:
+        for name in [n for n in _EFFECT_SWITCHES if n not in specs]:
+            del _EFFECT_SWITCHES[name]
+            _effect_params.pop(name, None)
+        for name, spec in specs.items():
+            _EFFECT_SWITCHES.setdefault(name, spec["enabled"])
+            old = {} if name == reset else _effect_params.get(name, {})
+            _effect_params[name] = {p["attr"]: old.get(p["attr"], p["default"]) for p in spec["params"]}
+    _rebuild_effect_chain()
+
+
+def _run_effects(cmd: tuple) -> list:
+    """
+    The effect chain's output for cmd, called under _plot_lock. An effect that
+    misbehaves (postprocess.EffectError) is switched off and the page told why;
+    the command then goes through whatever effects are left.
+    """
+    global _effect_chain
+    while True:
+        try:
+            return postprocess.apply_chain(_effect_chain, cmd, _effect_ctx)
+        except postprocess.EffectError as e:
+            eff = e.effect
+            log.error("[effect] %s switched off: %s", eff.name, e)
+            _EFFECT_SWITCHES[eff.name] = False
+            _effect_chain = [x for x in _effect_chain if x is not eff]
+            preview.broadcast({"type": "effect_failed", "name": eff.name,
+                               "label": getattr(eff, "label", eff.name), "error": str(e)})
+
+
 def _advance_effect_ctx(cmd: tuple) -> None:
     """
     Bring the context up to date *for* cmd, before the effects see it, so that
@@ -383,7 +431,7 @@ def _enqueue(cmd: tuple) -> None:
         if not _effect_chain:
             out = [cmd]
         else:
-            out = postprocess.apply_chain(_effect_chain, cmd, _effect_ctx)
+            out = _run_effects(cmd)
         # Everything the effects added on top of the base command (out minus the
         # passed-through base) — the "effect" layer, and all that gets plotted in
         # effects-only mode.
@@ -1462,11 +1510,26 @@ def _resume_after_rest(t: float, pressure: float) -> None:
     log.debug("[pen down again — stroke continues]")
 
 
+def _maybe_end_stroke():
+    """End the open stroke once STROKE_END_SEC has passed with no new point."""
+    # Not while an import feeds: its strokes end where the recording says, and
+    # a paused import would otherwise cut the stroke it paused in.
+    if _import_feeding.is_set():
+        return
+    with _pen_lock:
+        last = state["_last_point_time"]
+        if last is None or not state["_pen_is_down"] or time.time() - last <= STROKE_END_SEC:
+            return
+        log.debug("[stroke end — quiet for %g s]", STROKE_END_SEC)
+        _end_stroke()
+
+
 def _pen_rest_thread():
-    """Polls for a quiet point stream and rests the pen once PEN_REST_SEC passes."""
+    """Polls for a quiet point stream: rests the pen after PEN_REST_SEC, ends the stroke after STROKE_END_SEC."""
     while True:
         time.sleep(PEN_REST_SEC / 2)
         _maybe_rest_pen()
+        _maybe_end_stroke()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1545,8 +1608,8 @@ def _emit_point():
     # Whole pen-state read-modify-write runs under _pen_lock so the rest thread
     # cannot lift the pen partway through it.
     with _pen_lock:
-        # Only the state block (via _end_stroke) ends a stroke, so any point that
-        # arrives while one is open belongs to it, however long the gap before it.
+        # Only the state block or STROKE_END_SEC of quiet (via _end_stroke) ends
+        # a stroke, so any point that arrives while one is open belongs to it.
         was_down = state["_pen_is_down"]
         state["_pen_is_down"]     = True
         state["_last_point_time"] = now
@@ -1787,6 +1850,120 @@ def _build_dispatcher() -> Dispatcher:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# EFFECTS WRITTEN IN THE APP  (see PantographApp/custom_effects.py)
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# The page builds an effect in three steps: a description becomes a prompt
+# (effect_prompt), the person runs it in their own AI, and the reply is checked,
+# tested and added (effect_install). Each custom effect is a file in the
+# drawings folder's effects/, loaded at startup if the trust list says the app
+# saved it (see custom_effects.py).
+
+_effect_load_problems: list = []     # (file name, problem) for effects that didn't load
+_effects_trust = None                # Path of the trust list, in the config folder; set by start()
+_stuck_effect = None                 # name of an effect the watchdog found stuck, else None
+
+# An effect that hasn't returned after this long never will: the guard already
+# objects to one second. See _effect_watchdog_thread.
+EFFECT_STUCK_SEC = 5.0
+
+# What "Open ChatGPT" and its neighbours may open: nothing else.
+_AI_SITES = ("https://chatgpt.com/", "https://claude.ai/", "https://gemini.google.com/")
+
+
+def _load_custom_effects(drawings_dir) -> None:
+    global _effect_load_problems
+    loaded, _effect_load_problems = custom_effects.load_all(drawings_dir, _effects_trust)
+    for name, problem in _effect_load_problems:
+        log.error("[effect] %s didn't load: %s", name, problem)
+    if loaded:
+        log.info("[effect] custom: %s", ", ".join(c.name for c in loaded))
+        _sync_effect_registry()
+
+
+def _effect_prompt(msg: dict) -> dict:
+    """The prompt for the page to copy: a new effect, a revision, or a fix."""
+    mode = msg.get("mode") if msg.get("mode") in ("new", "revise", "fix") else "new"
+    code = msg.get("code") or ""
+    if mode == "revise" and not code:
+        code = custom_effects.source_of(msg.get("name") or "") or ""
+    text = custom_effects.prompt(mode, msg.get("description") or "", code, msg.get("error") or "")
+    return {"type": "effect_prompt", "mode": mode, "text": text}
+
+
+def _effect_install(msg: dict) -> dict:
+    """Runs on the tools thread: check, test and add the effect in an AI's reply."""
+    replaces = msg.get("replaces") or None
+    if _drawings_dir is None:
+        return {"type": "effect_installed", "ok": False,
+                "error": "There's no drawings folder to keep effects in.", "fix_prompt": ""}
+    if replaces is not None and custom_effects.source_of(replaces) is None:
+        replaces = None              # removed meanwhile: add it as a new one
+    result = custom_effects.install(msg.get("reply") or "", _drawings_dir, _effects_trust, replaces=replaces)
+    code = result.pop("code", "")
+    if not result["ok"]:
+        log.info("[effect] refused: %s", result["error"])
+        result["fix_prompt"] = custom_effects.prompt("fix", msg.get("description") or "", code, result["error"])
+        return {"type": "effect_installed", **result}
+    cls = result.pop("cls")
+    with _plot_lock:
+        postprocess.REGISTRY[cls.name] = cls
+    _sync_effect_registry(reset=cls.name)
+    log.info("[effect] %s %s (%s)", "revised" if replaces else "added", cls.name, cls.source_file)
+    specs = postprocess.effect_specs()
+    preview.broadcast({"type": "effect_specs", "specs": specs})
+    return {"type": "effect_installed", "replaces": replaces, "specs": specs, **result}
+
+
+def _effect_remove(name) -> dict | None:
+    if _drawings_dir is None or not custom_effects.remove_file(name, _drawings_dir, _effects_trust):
+        return {"type": "error", "message": "Only an effect added in the app can be removed."}
+    with _plot_lock:
+        _EFFECT_SWITCHES.pop(name, None)
+        _effect_params.pop(name, None)
+        postprocess.REGISTRY.pop(name, None)
+    _sync_effect_registry()
+    log.info("[effect] removed %s", name)
+    preview.broadcast({"type": "effect_specs", "specs": postprocess.effect_specs()})
+    return None
+
+
+def _effect_watchdog_thread() -> None:
+    while not _stop_event.wait(0.5):
+        _check_stuck_effect()
+
+
+def _check_stuck_effect() -> None:
+    """
+    Notice an effect that never returns from a command: an endless loop that
+    the self-test's made-up strokes didn't set off. Python can't stop it, and it
+    holds _plot_lock, so plotting is over until Pantograph restarts. What can
+    be done is to switch it off in the saved settings, so the restart doesn't
+    bring it straight back, and to tell the page. Once per run.
+    """
+    global _stuck_effect
+    r = postprocess.running()
+    if r is None or _stuck_effect is not None or time.perf_counter() - r[1] < EFFECT_STUCK_SEC:
+        return
+    eff = r[0]
+    _stuck_effect = eff.name
+    _EFFECT_SWITCHES[eff.name] = False
+    if _settings is not None:
+        _settings.replace({**_settings.values, f"axi_fx_en_{eff.name}": "0"})
+    log.error("[effect] %s is stuck (no answer after %g s); switched off for next time",
+              eff.name, EFFECT_STUCK_SEC)
+    preview.broadcast({"type": "effect_stuck", "name": eff.name,
+                       "label": getattr(eff, "label", eff.name)})
+
+
+def _open_url(url: str) -> None:
+    """Open one of the AI sites in the system browser (never in Pantograph's own window)."""
+    if url in _AI_SITES:
+        import webbrowser
+        webbrowser.open(url)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # BROWSER → ENGINE MESSAGES
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1858,6 +2035,14 @@ def _handle_preview_message(msg):
     elif t == "set_effects_only":
         _effects_only = bool(msg.get("enabled", False))
         log.info("[effect] effects-only %s", "on" if _effects_only else "off")
+    elif t == "effect_prompt":
+        return _effect_prompt(msg)
+    elif t == "effect_install":
+        return _in_background(lambda: _effect_install(msg))
+    elif t == "effect_remove":
+        return _effect_remove(msg.get("name"))
+    elif t == "open_url":
+        _open_url(msg.get("url") or "")
     elif t == "import_drawing":
         return start_import(msg.get("recording") or {}, name=msg.get("name"))
     elif t == "import_opened":
@@ -2102,9 +2287,24 @@ def _end_session() -> None:
         (_drawings_dir / AUTOSAVE_NAME).unlink(missing_ok=True)
 
 
+def _fresh_page() -> None:
+    """
+    Forget the drawing as far as the effects go. Stroke connector reaches back
+    to earlier strokes, and heal dots to the last one: on a new page those are
+    on the old sheet, and a line to them would cross the fresh one.
+    """
+    global _effect_chain, _effect_ctx, _last_stroke_end, _stroke_end_items
+    with _plot_lock:
+        _effect_chain = postprocess.build_chain(_EFFECT_SWITCHES, _effect_params)
+        _effect_ctx   = postprocess.Ctx(x_max=travel()[0], y_max=travel()[1])
+    with _pen_lock:
+        _last_stroke_end, _stroke_end_items = None, []
+
+
 def new_drawing() -> None:
     """Save the current drawing (if any) and start a fresh one, on every open page."""
     _end_stroke()
+    _fresh_page()
     saved = _save_session()
     _recorder.clear()
     if _drawings_dir is not None:
@@ -2168,6 +2368,7 @@ def _to_canvas_space(rec: dict) -> dict:
 def discard_drawing() -> None:
     """Throw the current drawing away (the page asks first) and start a fresh one."""
     _end_stroke()
+    _fresh_page()
     _recorder.clear()
     if _drawings_dir is not None:
         (_drawings_dir / AUTOSAVE_NAME).unlink(missing_ok=True)
@@ -2392,6 +2593,7 @@ def _hello() -> dict:
         "lag":            round(_current_lag_sec, 2),
         "import":         _import_msg(),
         "effect_specs":   postprocess.effect_specs(),
+        "effect_problems": [{"file": f, "error": e} for f, e in _effect_load_problems],
         "drawings_dir":   str(_drawings_dir or ""),
         "opened":         _opened_msg() if _opened is not None else None,
     }
@@ -2427,11 +2629,18 @@ def start(ui_ports=preview.DEFAULT_PORTS, drawings_dir=None, settings=None) -> s
     immediately with the UI's URL; everything runs on background threads, so
     the caller's (main) thread stays free — Option 1B's window will need it.
     """
-    global _plotter_thread_handle, _drawings_dir, _settings
+    global _plotter_thread_handle, _drawings_dir, _settings, _effects_trust
 
     # A layout from the defaults; the saved one (if any) arrives with the
     # settings just below, and iDraw's real canvas size refits it.
     _update_layout(refit=True)
+
+    # Effects written in the app join the list before the saved settings, which
+    # may switch them on.
+    if settings is not None:
+        _effects_trust = settings.path.parent / custom_effects.TRUST_FILE_NAME
+    if drawings_dir is not None:
+        _load_custom_effects(drawings_dir)
 
     # Saved settings first, so the plotter starts configured even with no page open.
     _settings = settings
@@ -2457,6 +2666,7 @@ def start(ui_ports=preview.DEFAULT_PORTS, drawings_dir=None, settings=None) -> s
     threading.Thread(target=_pen_rest_thread,      name="pen-rest", daemon=True).start()
     threading.Thread(target=_optimizer_thread,     name="optimizer", daemon=True).start()
     threading.Thread(target=_lag_broadcast_thread, name="lag",       daemon=True).start()
+    threading.Thread(target=_effect_watchdog_thread, name="effect-watchdog", daemon=True).start()
     if _drawings_dir is not None:
         threading.Thread(target=_autosave_thread, name="autosave", daemon=True).start()
         _shutdown_hooks.append(_end_session)
@@ -2486,14 +2696,19 @@ def shutdown() -> None:
         _stop_event.set()
         _import_cancel.set()
         _import_pause.clear()
-        stop_osc_listener()
+        # A stuck effect (see _effect_watchdog_thread) holds _plot_lock, maybe
+        # inside the OSC handler, so neither may be waited on: the process
+        # ending takes care of both.
+        if _stuck_effect is None:
+            stop_osc_listener()
 
         # Let the plotter finish the command it's on, then take the USB link over.
         _plotter_stop.set()
         if _plotter_thread_handle is not None:
             _plotter_thread_handle.join(timeout=2)
-        with _plot_lock:
+        if _plot_lock.acquire(timeout=2):
             _plot_deque.clear()
+            _plot_lock.release()
         if _ad:
             _make_axidraw_safe(_ad)
 

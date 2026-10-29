@@ -42,6 +42,29 @@ def test_pause_rests_the_pen_but_keeps_the_stroke(engine):
     assert k.count("moveto") == 1 and pen_ups(engine) == 0
 
 
+def test_a_long_quiet_ends_the_stroke_without_waiting_for_the_next(engine):
+    send_block(engine); [send_point(engine, 100 + i * 5, 400) for i in range(3)]
+    engine.state["_last_point_time"] -= engine.STROKE_END_SEC / 2
+    engine._maybe_end_stroke()
+    assert pen_ups(engine) == 0                     # a pause, not an end
+    engine.state["_last_point_time"] -= engine.STROKE_END_SEC
+    engine._maybe_end_stroke()
+    assert pen_ups(engine) == 1 and not engine.state["_pen_is_down"]
+    [send_point(engine, 120 + i * 5, 400) for i in range(3)]   # no block: a new stroke
+    assert kinds(engine).count("moveto") == 2
+
+
+def test_a_paused_import_keeps_its_stroke_open(engine):
+    send_block(engine); [send_point(engine, 100 + i * 5, 400) for i in range(3)]
+    engine.state["_last_point_time"] -= 10
+    engine._import_feeding.set()
+    try:
+        engine._maybe_end_stroke()
+    finally:
+        engine._import_feeding.clear()
+    assert pen_ups(engine) == 0
+
+
 def test_rest_already_executed_lowers_the_pen_again(engine):
     send_block(engine); [send_point(engine, 100 + i * 5, 400) for i in range(3)]
     pause(engine)

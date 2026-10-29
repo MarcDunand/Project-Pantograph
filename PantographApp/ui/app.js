@@ -971,6 +971,21 @@ function buildEffectsPanel(specs) {
       head.append(info);
     }
     box.append(head);
+    if (spec.custom) {
+      const tools = document.createElement('div');
+      tools.className = 'btn-row';
+      const tag = document.createElement('span');
+      tag.className = 'tag'; tag.textContent = 'added by you';
+      name.after(tag);
+      const revise = document.createElement('button');
+      revise.className = 'btn small'; revise.textContent = 'Revise…';
+      revise.onclick = () => openEffectWindow(spec);
+      const remove = document.createElement('button');
+      remove.className = 'btn small danger'; remove.textContent = 'Remove';
+      remove.onclick = () => removeEffect(spec);
+      tools.append(revise, remove);
+      box.append(tools);
+    }
     const knobs = document.createElement('div');
     knobs.className = 'group';
     for (const p of spec.params) {
@@ -1031,6 +1046,132 @@ function resetEffects() {
   store.remove('axi_fx_only');
   buildEffectsPanel(EFFECT_SPECS);
   syncEffects();
+}
+function forgetEffectParams(name) {
+  const spec = EFFECT_SPECS.find(s => s.name === name);
+  for (const p of spec ? spec.params : []) store.remove(fxParamKey(name, p.attr));
+}
+
+// ── adding an effect: describe it, ask your own AI, paste the reply back ────
+//
+// The engine builds the prompt and checks, tests and saves the reply
+// (PantographApp/custom_effects.py). No AI runs here.
+
+const fxWin = { revising: null, fixPrompt: '', lastError: {} };
+
+function openEffectWindow(spec = null) {
+  fxWin.revising = spec;
+  $('fx-window-title').textContent = spec ? 'Revise “' + spec.label + '”' : 'New effect';
+  $('fx-describe-title').textContent = spec ? 'Say what should change' : 'Describe the effect';
+  $('fx-describe-hint').textContent = (spec
+    ? 'In your own words: what should it do differently? The prompt includes the effect as it is now.'
+    : 'In your own words, what should the plotter do differently? For example: “after every stroke, draw a small spiral where it ended”, or “make lines wobble more the harder I press”.')
+    + ' Write it yourself: a description someone else hands you can tell the AI to slip in harmful code.';
+  const err = spec && fxWin.lastError[spec.name];
+  $('fx-description').value = err ? `Pantograph switched it off with this message: "${err}" Please fix that.` : '';
+  $('fx-prompt').value = '';
+  $('fx-reply').value = '';
+  $('fx-step-prompt').hidden = $('fx-step-paste').hidden = true;
+  $('fx-result').hidden = $('fx-fix-row').hidden = true;
+  $('fx-install-status').textContent = '';
+  $('fx-install').disabled = false;
+  openWindow('fx-window');
+  $('fx-description').focus();
+}
+$('fx-add').onclick = () => openEffectWindow();
+
+$('fx-make-prompt').onclick = () => {
+  const description = $('fx-description').value.trim();
+  if (!description) { $('fx-description').focus(); toast('Describe the effect first.'); return; }
+  const r = fxWin.revising;
+  if (!send({ type: 'effect_prompt', mode: r ? 'revise' : 'new', name: r ? r.name : undefined, description }))
+    toast('Not connected to Pantograph.', true);
+};
+function onEffectPrompt(msg) {
+  $('fx-prompt').value = msg.text;
+  $('fx-step-prompt').hidden = $('fx-step-paste').hidden = false;
+  $('fx-copy-prompt').focus();
+}
+$('fx-copy-prompt').onclick = async () => {
+  const ok = await copyText($('fx-prompt').value);
+  toast(ok ? 'Prompt copied. Paste it into your AI chat.' : 'Copy failed: select the prompt and copy it by hand.', !ok);
+};
+document.querySelectorAll('[data-ai]').forEach(b => { b.onclick = () => send({ type: 'open_url', url: b.dataset.ai }); });
+
+$('fx-install').onclick = () => {
+  const reply = $('fx-reply').value;
+  if (!reply.trim()) { $('fx-reply').focus(); toast("Paste the AI's reply first."); return; }
+  const r = fxWin.revising;
+  if (!send({ type: 'effect_install', reply, description: $('fx-description').value.trim(),
+              replaces: r ? r.name : null })) { toast('Not connected to Pantograph.', true); return; }
+  $('fx-install').disabled = true;
+  $('fx-install-status').textContent = 'Checking and testing…';
+  $('fx-result').hidden = $('fx-fix-row').hidden = true;
+};
+function onEffectInstalled(msg) {
+  $('fx-install').disabled = false;
+  $('fx-install-status').textContent = '';
+  const box = $('fx-result'), fix = $('fx-fix-row');
+  box.hidden = !msg.ok;
+  fix.hidden = msg.ok;
+  if (!msg.ok) {
+    // One line: the fix prompt carries the details to the AI. They're in the
+    // tooltip for anyone curious.
+    fxWin.fixPrompt = msg.fix_prompt || '';
+    $('fx-copy-fix').hidden = !fxWin.fixPrompt;
+    $('fx-fail-text').textContent = fxWin.fixPrompt ? "Code didn't compile." : "Code didn't compile: " + msg.error;
+    $('fx-fail-text').title = msg.error;
+    fix.scrollIntoView({ block: 'nearest' });
+    return;
+  }
+  // Try it on its own: effects aren't designed to run together.
+  if (msg.replaces) forgetEffectParams(msg.name);
+  delete fxWin.lastError[msg.name];
+  for (const s of msg.specs) store.set(fxEnKey(s.name), s.name === msg.name ? '1' : '0');
+  buildEffectsPanel(msg.specs);
+  syncEffects();
+  fxWin.revising = msg.specs.find(s => s.name === msg.name) || null;
+  // Like a refusal, one line; the self-test's doubts, if any, in the tooltip.
+  $('fx-result-text').textContent = msg.replaces ? 'Effect updated.' : 'Effect added.';
+  $('fx-result-text').title = msg.warning || '';
+  box.scrollIntoView({ block: 'nearest' });
+  showTab('tab-effects');
+  const added = $('fx-' + msg.name);
+  if (added) added.closest('.fx').scrollIntoView({ block: 'nearest' });
+}
+$('fx-copy-fix').onclick = async () => {
+  const ok = await copyText(fxWin.fixPrompt);
+  if (ok) { $('fx-reply').value = ''; $('fx-reply').focus(); }
+  toast(ok ? 'Fix prompt copied. Paste it into the same AI chat.' : 'Copy failed.', !ok);
+};
+$('fx-done').onclick = () => { $('fx-window').hidden = true; };
+
+async function removeEffect(spec) {
+  if (await ask({ title: 'Remove “' + spec.label + '”?',
+                  body: 'It leaves the Effects list. Its file is moved to the effects/removed folder in your Pantograph folder, so it can be got back.',
+                  ok: 'Remove', danger: true }) !== 'ok') return;
+  store.remove(fxEnKey(spec.name));
+  forgetEffectParams(spec.name);
+  send({ type: 'effect_remove', name: spec.name });
+}
+
+// An effect misbehaved mid-drawing, and the engine switched it off.
+function onEffectFailed(msg) {
+  fxWin.lastError[msg.name] = msg.error;
+  store.set(fxEnKey(msg.name), '0');
+  buildEffectsPanel(EFFECT_SPECS);
+  const custom = (EFFECT_SPECS.find(s => s.name === msg.name) || {}).custom;
+  toast(`“${msg.label}” was switched off: ${msg.error}.` + (custom ? ' Revise it to ask your AI for a fix.' : ''), true);
+}
+
+// The engine can't stop an effect stuck in an endless loop, and it holds the
+// plot lock, so nothing here may send the engine anything that needs it: only
+// the saved switch changes (the engine has already saved it off too).
+function onEffectStuck(msg) {
+  fxWin.lastError[msg.name] = 'it got stuck and never finished a point (probably an endless loop)';
+  store.set(fxEnKey(msg.name), '0');
+  buildEffectsPanel(EFFECT_SPECS);
+  toast(`“${msg.label}” got stuck, and plotting has stopped. Close Pantograph and open it again: the effect stays off. Revise it to ask your AI for a fix.`, true);
 }
 
 // ── status: iPad and plotter ────────────────────────────────────────────────
@@ -1314,8 +1455,17 @@ function handleMessage(msg) {
     // 'hello' is a catch-up — changing the paper asks for one — and reopening
     // the preview then would be a window nobody asked for.
     if (firstHello && msg.opened && msg.opened.ok) showOpened(msg.opened);
+    if (firstHello && (msg.effect_problems || []).length) {
+      const p = msg.effect_problems[0], more = msg.effect_problems.length - 1;
+      toast(`An effect file didn't load (${p.file}): ${p.error}` + (more ? ` (${more} more in the log.)` : ''), true);
+    }
     return;
   }
+  case 'effect_prompt': onEffectPrompt(msg); return;
+  case 'effect_installed': onEffectInstalled(msg); return;
+  case 'effect_specs': buildEffectsPanel(msg.specs || []); return;
+  case 'effect_failed': onEffectFailed(msg); return;
+  case 'effect_stuck': onEffectStuck(msg); return;
   case 'point': onPoint(msg); return;
   case 'pen_up': onPenUp(); return;
   case 'layer': handleLayer(msg); return;

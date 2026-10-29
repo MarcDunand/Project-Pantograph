@@ -290,6 +290,13 @@
         <label class="check"><input type="checkbox" id="fx-effects-only"><span>Effects only (skip the drawing itself)</span><button class="info" data-info="Plot only the marks the effects add, not the drawing underneath. Import a finished drawing to lay effects over it." aria-label="About effects only"></button></label>
       </section>
       <div class="group" id="fx-list"></div>
+      <section class="group">
+        <div class="btn-row">
+          <button class="btn" id="fx-add">Add new effect…</button>
+          <span class="risky">Potentially risky</span>
+          <button class="info" data-info="Describe an effect in your own words, and Pantograph writes a prompt for it. Paste the prompt into an AI chat (ChatGPT, Claude, Gemini - the free versions work), then paste the AI's reply back, and the effect joins this list. No coding needed." aria-label="About adding an effect"></button>
+        </div>
+      </section>
     </div>
   </aside>
 </main>
@@ -334,6 +341,52 @@
       </section>
 
       <div class="btn-row"><button class="btn" id="reset-settings">Reset settings to defaults</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- a new effect, written by the person's own AI (PantographApp/custom_effects.py) -->
+<div class="window" id="fx-window" hidden role="dialog" aria-modal="true" aria-labelledby="fx-window-title">
+  <div class="window-card wide">
+    <header><h2 id="fx-window-title">New effect</h2><button class="btn small close-window">Close</button></header>
+    <div class="window-body">
+      <section class="group" id="fx-step-describe">
+        <h3><span class="step">1</span> <span id="fx-describe-title">Describe the effect</span></h3>
+        <p class="hint" id="fx-describe-hint">In your own words, what should the plotter do differently? For example: “after every stroke, draw a small spiral where it ended”, or “make lines wobble more the harder I press”. Write it yourself: a description someone else hands you can tell the AI to slip in harmful code.</p>
+        <textarea id="fx-description" rows="4" aria-labelledby="fx-describe-title"></textarea>
+        <div class="btn-row"><button class="btn primary" id="fx-make-prompt">Make the prompt</button></div>
+      </section>
+
+      <section class="group" id="fx-step-prompt" hidden>
+        <h3><span class="step">2</span> Ask your AI</h3>
+        <p class="hint">Copy this prompt into any AI chat. The free versions of ChatGPT, Claude and Gemini all work. It tells the AI everything it needs to know about Pantograph. When it answers, copy its whole reply.</p>
+        <textarea id="fx-prompt" rows="5" readonly aria-label="The prompt"></textarea>
+        <div class="btn-row">
+          <button class="btn primary" id="fx-copy-prompt">Copy prompt</button>
+          <button class="btn" data-ai="https://chatgpt.com/">Open ChatGPT</button>
+          <button class="btn" data-ai="https://claude.ai/">Open Claude</button>
+          <button class="btn" data-ai="https://gemini.google.com/">Open Gemini</button>
+        </div>
+      </section>
+
+      <section class="group" id="fx-step-paste" hidden>
+        <h3><span class="step">3</span> Paste the reply</h3>
+        <div class="code-warning" role="note">
+          <b class="code-warning-title">WARNING: What you paste here runs on your computer.</b>
+          <p>This code will become part of Pantograph, with the same access to this computer that Pantograph has: <b>it could read, change or delete your files, or send them somewhere</b>. Pantograph checks that the code works as an effect. <b>It can't check that the code is safe</b>.</p>
+          <p>Only paste a reply from an AI chat you started yourself with this prompt, or code from someone you trust. <b>Never paste code a stranger sent you</b>.</p>
+        </div>
+        <textarea id="fx-reply" rows="6" placeholder="Paste the AI's whole reply here" aria-label="The AI's reply"></textarea>
+        <div class="btn-row"><button class="btn primary" id="fx-install">Check and add</button><span class="hint" id="fx-install-status" role="status"></span></div>
+        <div class="fx-outcome" id="fx-fix-row" hidden>
+          <p class="fx-fail" id="fx-fail-text">Code didn't compile.</p>
+          <div class="btn-row"><button class="btn primary" id="fx-copy-fix">Copy a prompt to fix it</button></div>
+        </div>
+        <div class="fx-outcome" id="fx-result" hidden>
+          <p class="fx-ok" id="fx-result-text">Effect added.</p>
+          <div class="btn-row"><button class="btn primary" id="fx-done">Done</button></div>
+        </div>
+      </section>
     </div>
   </div>
 </div>

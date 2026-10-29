@@ -357,6 +357,8 @@ iPad (iDraw OSC) ──UDP :8800──► listen_to_idraw.py  (engine, backgroun
     settings.py        settings store (JSON on disk, defaults)
     netinfo.py         local IP list
     dialogs.py   NEW   the system's own Open and Save windows (main thread only)
+    custom_effects.py  effects written with your own AI: prompt, check, self-test, load
+    effect_prompt.txt  the wording of that prompt
     ui/                index.html, app.js, app.css, icon.svg
 ```
 
@@ -1337,6 +1339,91 @@ of it:
   is one line per paragraph now. The v0.2.0 page itself keeps its old text
   unless it's edited by hand.
 
+### After v0.2.2: effects written with your own AI (not yet released)
+
+**2026-10-28, from Marc:** an **Add new effect…** button, so anyone can make
+an effect without coding. Pantograph builds a prompt from a description (no
+AI inside Pantograph, so no subscription or API key), the person runs it in
+their own AI chat, and pastes the reply back. Text boxes throughout, so no
+files to find; each effect is still saved as a file behind the scenes. User
+docs: README § Your own effects.
+
+- [x] **`postprocess.py` made easier to write against.** `after_stroke(points,
+      t, ctx)` collects the stroke's points in the base class (pressure hatch,
+      stroke connector and mirror each used to do that themselves) and
+      `draw_path()` makes one new stroke from a list of points. All three
+      moved onto them; on the same strokes their output is identical to
+      before, command for command.
+- [x] **The engine guards every effect** (`run_effect`, `_run_effects`).
+      Anything an effect makes is checked (known kind, right numbers, no NaN)
+      and clamped onto the paper. An effect that raises, makes over 20,000
+      commands from one point or takes over a second on one is switched off,
+      the page is told why (`effect_failed`), and the stroke keeps plotting.
+      Built-ins go through it too, so zigzag can no longer drive off the paper.
+- [x] **`PantographApp/custom_effects.py`**: pulls the code out of a chatty
+      reply, checks it without running it (one `Effect` subclass, imports from
+      a short list, no `open`/`exec`/`eval`), then self-tests it **in a child
+      process** (default settings, then each setting at its min and max),
+      killed after 10 s. Effects live in `<drawings>/effects/<name>.py`,
+      outside the app folder the installer replaces, and load at startup. The
+      file name is the effect's name, so a second "end_circle" becomes
+      `end_circle_2`, and a revision keeps its name and on/off setting.
+- [x] **The prompt** is `PantographApp/effect_prompt.txt` (sections MAIN, NEW,
+      REVISE, FIX). The API part is pasted in from `postprocess.py`'s own
+      source at prompt time, so it can't drift from the code. About 6k tokens,
+      which fits free AI chats.
+- [x] **The page:** a three-step window (describe, copy prompt, paste reply),
+      Revise… and Remove on each custom effect, "Open ChatGPT / Claude /
+      Gemini" (opened in the system browser by the engine; only those three
+      URLs). A refused reply offers **Copy a prompt to fix it**. A new effect
+      is switched on and the others off, since effects aren't designed to run
+      together.
+- [x] **The code warning** sits above the paste box: the code runs on this
+      computer with Pantograph's access, and the checks can't tell it's safe.
+      The checks are for an AI's mistakes, not a sandbox; Python can't be
+      sandboxed cheaply, and for a demo where people paste their own AI's
+      code, the warning was the agreed trade-off (Marc, 2026-10-28).
+- [x] `tests/test_effects.py`: reply parsing, refusals, the guards, add /
+      revise / remove, a mid-drawing failure, an endless loop caught by the
+      self-test, loading at startup, and the whole flow in a real browser.
+- [x] **Security pass (2026-10-28).** Websites can't reach the install path
+      (127.0.0.1 only, Host and Origin checked), but three gaps were closed:
+      - *Startup ran any `.py` in the effects folder*, unchecked and unwarned
+        (a shared file, a OneDrive-synced Documents). Now `install()` records
+        each file's SHA-256 in `<config>/trusted_effects.json`, and
+        `load_all()` skips and reports anything not recorded or since edited.
+        Sharing is by pasting code, so it always passes the warning.
+      - *An endless loop while drawing froze the engine for good*, and the
+        guard's one-second check only runs once an effect returns. A watchdog
+        (`_check_stuck_effect`, 5 s) saves the effect as off and tells the
+        page (`effect_stuck`). Shutdown no longer waits on the plot lock or
+        the OSC thread a stuck effect holds, so Quit still works.
+      - *A description someone hands you can smuggle code in* through the AI.
+        The describe step now says to write it yourself.
+      The static check stays a mistake-catcher, not a boundary
+      (`random._os.system` gets past it); the warning says so plainly, and a
+      "Potentially risky" note sits next to Add new effect….
+- [x] **Code markers (2026-10-28, from Marc's test).** Copying a whole reply
+      as plain text drops the ``` fences, and the prose after the code was
+      parsed as code ("unterminated string literal"). The prompt now asks for
+      `# --- PANTOGRAPH EFFECT START ---` / `END ---` comment lines around the
+      code, and `extract_code()` takes what's between them; without markers
+      or fences it trims prose until the code parses. A refusal now shows as
+      one line, "Code didn't compile." with **Copy a prompt to fix it** below,
+      and success as "Effect added." with **Done** below.
+- [x] **Stroke-end effects waited for the next stroke (2026-10-28, from
+      Marc).** iDraw sends nothing on lift, so `after_stroke` marks for the
+      last stroke were queued only when the next stroke began, or at New
+      drawing, onto the fresh sheet. Now `STROKE_END_SEC` (1 s) of quiet ends
+      the stroke (`_maybe_end_stroke`, on the pen-rest thread; not while an
+      import feeds). New drawing and Discard also rebuild the effect chain
+      (`_fresh_page`), so stroke connector no longer links the new sheet's
+      first stroke back to the old one.
+- [ ] **Check (Marc):** one real round trip with a free AI chat, then the new
+      effect plotted on the AxiDraw. Worth doing before the release, since how
+      well a free model follows the prompt is the one thing the tests can't
+      show.
+
 ---
 
 ## 5. Behaviour changes users will notice
@@ -1379,6 +1466,13 @@ Since v0.2.0:
   the console version back.
 - Starting it twice brings the existing window forward.
 - An import's progress bar moves from the start, not only near the end.
+
+Since v0.2.2:
+- Effects → Add new effect…: describe an effect, run the prompt Pantograph
+  makes in your own AI chat, and paste the reply back. Your effects are kept in
+  `Documents/Pantograph/effects/` and survive updates.
+- An effect that goes wrong mid-drawing is switched off with a message, and
+  the drawing keeps plotting.
 
 ---
 

@@ -33,6 +33,18 @@ change:
             t, _, x, y, p = cmd
             return [lineto(t, x + 0.05, y, p)]
 
+Most effects that *add* marks act once a stroke is finished. For those, write
+after_stroke() instead: the base class collects the stroke's points for you, and
+whatever after_stroke() returns is plotted right after the pen lifts. draw_path()
+turns a list of points into the commands for one new stroke:
+
+    class Echo(Effect):
+        name = "echo"
+
+        def after_stroke(self, points, t, ctx):
+            moved = [(x + 0.1, y, p) for x, y, p in points]
+            return draw_path(t, moved, ctx)
+
 Anything the per-kind hooks can't express goes in handle(), which sees every
 command and is free to trigger on whatever it likes — RNG, position, a counter,
 elapsed time:
@@ -60,8 +72,9 @@ rotation and flip H/V (see canvas_to_physical in listen_to_idraw.py):
     x ∈ [0, ctx.x_max]   physical long axis   (PAPER_HEIGHT_IN)
     y ∈ [0, ctx.y_max]   physical short axis  (PAPER_WIDTH_IN)
 
-Effects that move the pen should clamp with clamp_xy() — the AxiDraw will
-happily try to drive past the paper.
+The AxiDraw will happily try to drive past the paper, so whatever an effect
+emits is clamped to it on the way out (see run_effect). clamp_xy() is there for
+effects that want to know where a point will really land.
 
 
 COMMAND FORMAT
@@ -77,10 +90,23 @@ Use the constructors and accessors below rather than indexing by hand.
 
 Control commands (home, pen_test_*) bypass the effect chain entirely — they are
 machine operations, not part of the drawing.
+
+
+GUARDS
+──────
+Effects can be written by people who don't read this file (see
+PantographApp/custom_effects.py), so the engine never trusts what one returns.
+run_effect() checks every command an effect *makes*: a known kind with the right
+numbers, every position clamped to the paper, pressure clamped to 0–1. An effect
+that raises, returns something malformed, floods the queue or stalls the stream
+raises EffectError, and the engine switches it off rather than stop plotting.
+An effect that never returns can't be stopped from here; running() lets the
+engine's watchdog notice it, switch it off for next time and say so.
 """
 
 import math
 import random
+import time
 from dataclasses import dataclass
 
 # Commands are in inches (see COORDINATES); effects sized in mm convert with this.
@@ -168,6 +194,28 @@ def clamp_xy(x: float, y: float, ctx: Ctx) -> tuple:
     return (max(0.0, min(ctx.x_max, x)), max(0.0, min(ctx.y_max, y)))
 
 
+def draw_path(t: float, points: list, ctx: Ctx, pressure: float = 0.5) -> list:
+    """
+    The commands for one new stroke through `points`: travel to the first, pen
+    down, a line through the rest, pen up. Points are (x, y) or (x, y, pressure);
+    a point without its own pressure uses `pressure`. A single point plots as a
+    dot. Every point is clamped to the paper.
+    """
+    pts = []
+    for pt in points:
+        x, y = clamp_xy(pt[0], pt[1], ctx)
+        pts.append((x, y, pt[2] if len(pt) > 2 and pt[2] is not None else pressure))
+    if not pts:
+        return []
+    x0, y0, p0 = pts[0]
+    out = [moveto(t, x0, y0), pendown(t, p0, x0, y0)]
+    if len(pts) == 1:
+        out.append(dot_dwell(t))
+    out += [lineto(t, x, y, p) for x, y, p in pts[1:]]
+    out.append(penup(t))
+    return out
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # BASE EFFECT
 # ──────────────────────────────────────────────────────────────────────────────
@@ -189,6 +237,7 @@ class Effect:
     label = "effect"          # human-readable name for the browser's effects panel
     blurb = ""                # one or two plain sentences, shown behind the panel's "i"
     default_on = False        # initial checkbox state in the effects panel
+    source_file = None        # the .py it came from, for one loaded from the effects folder
 
     # Tunable numeric knobs exposed to the browser's effects panel. Each entry:
     #   {"attr": <class attribute name>, "label": <ui text>,
@@ -198,6 +247,11 @@ class Effect:
 
     def __init__(self, seed: int | None = None):
         self.rng = random.Random(seed if seed is not None else 0xD2A)
+        # (x, y, pressure) of every inked point of the stroke in progress, as it
+        # came in (before this effect changed anything). Kept by handle(), so
+        # it's there whichever hooks a subclass overrides; still holds the
+        # finished stroke while its penup is handled.
+        self.stroke: list = []
         self.reset()
 
     def reset(self) -> None:
@@ -211,15 +265,32 @@ class Effect:
         position, counters, time — and delegate to super().handle(cmd, ctx) for
         the default response to everything else.
         """
-        hook = getattr(self, f"on_{kind_of(cmd)}", None)
+        kind = kind_of(cmd)
+        if kind == "moveto":
+            self.stroke = []
+        elif kind in ("pendown", "lineto"):
+            self.stroke.append((*xy_of(cmd), pressure_of(cmd)))
+        hook = getattr(self, f"on_{kind}", None)
         return [cmd] if hook is None else hook(cmd, ctx)
+
+    def after_stroke(self, points: list, t: float, ctx: Ctx) -> list:
+        """
+        Extra commands to plot once a stroke is finished, after its pen lifts.
+        `points` is the stroke as drawn: (x, y, pressure) per point, never empty.
+        Return [] to add nothing (the default). Build new strokes with draw_path().
+        """
+        return []
 
     # ── default responses ────────────────────────────────────────────────────
     def on_moveto(self, cmd, ctx):    return [cmd]
     def on_pendown(self, cmd, ctx):   return [cmd]
     def on_lineto(self, cmd, ctx):    return [cmd]
     def on_dot_dwell(self, cmd, ctx): return [cmd]
-    def on_penup(self, cmd, ctx):     return [cmd]
+
+    def on_penup(self, cmd, ctx):
+        if not self.stroke:
+            return [cmd]
+        return [cmd, *self.after_stroke(self.stroke, time_of(cmd), ctx)]
 
 
 def apply_chain(effects: list, cmd: tuple, ctx: Ctx) -> list:
@@ -232,9 +303,99 @@ def apply_chain(effects: list, cmd: tuple, ctx: Ctx) -> list:
     for eff in effects:
         out = []
         for c in cmds:
-            out.extend(eff.handle(c, ctx))
+            out.extend(run_effect(eff, c, ctx))
         cmds = out
     return cmds
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GUARDS  (see the module docstring)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Most commands one incoming command may become. A long stroke's after_stroke
+# legitimately returns a few thousand; a hundred thousand is a runaway loop.
+MAX_OUTPUT_PER_COMMAND = 20000
+
+# Longest one handle() call may take. Points arrive every few milliseconds and
+# the whole stream waits on each call, so a second is already far too slow.
+MAX_SECONDS_PER_COMMAND = 1.0
+
+# (effect, perf_counter() when it started) while an effect is handling a
+# command, else None. Effects only run under the engine's plot lock, one at a time.
+_running = None
+
+
+def running():
+    """The effect handling a command right now, and since when, or None."""
+    return _running
+
+# kind → how many numbers follow it, and which of them is the pressure.
+_SHAPES = {"moveto": (2, None), "pendown": (3, 0), "lineto": (3, 2),
+           "dot_dwell": (0, None), "penup": (0, None)}
+
+
+class EffectError(Exception):
+    """An effect misbehaved; the engine switches it off. str() says how, plainly."""
+
+    def __init__(self, effect: "Effect", message: str):
+        super().__init__(message)
+        self.effect = effect
+
+
+def run_effect(eff: Effect, cmd: tuple, ctx: Ctx) -> list:
+    """
+    One effect's response to one command, checked. A command passed through
+    untouched is trusted as it came in; anything the effect made is checked and
+    clamped onto the paper. Raises EffectError instead of returning nonsense.
+    """
+    global _running
+    started = time.perf_counter()
+    _running = (eff, started)
+    try:
+        out = eff.handle(cmd, ctx)
+    except Exception as e:                    # noqa: BLE001 — any bug in any effect
+        raise EffectError(eff, f"it stopped with an error: {type(e).__name__}: {e}") from e
+    finally:
+        _running = None
+    if time.perf_counter() - started > MAX_SECONDS_PER_COMMAND:
+        raise EffectError(eff, "it is too slow: one point took over "
+                               f"{MAX_SECONDS_PER_COMMAND:g} s, and the plotter waits on every point")
+    if not isinstance(out, (list, tuple)):
+        raise EffectError(eff, f"a hook returned {type(out).__name__}, not a list of commands")
+    if len(out) > MAX_OUTPUT_PER_COMMAND:
+        raise EffectError(eff, f"it made {len(out)} commands from a single point "
+                               f"(at most {MAX_OUTPUT_PER_COMMAND} are allowed)")
+    return [c if c is cmd else _checked(eff, c, ctx) for c in out]
+
+
+def _finite(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _checked(eff: Effect, c, ctx: Ctx) -> tuple:
+    """c as a well-formed command on the paper, or EffectError."""
+    if not isinstance(c, tuple) or len(c) < 2 or c[1] not in _SHAPES:
+        raise EffectError(eff, f"it made something that isn't a plot command: {c!r:.80}")
+    kind = c[1]
+    n, p_at = _SHAPES[kind]
+    args = list(c[2:])
+    if len(args) != n:
+        raise EffectError(eff, f"a {kind} command needs {n} numbers after its kind, not {len(args)}: {c!r:.80}")
+    if not _finite(c[0]):
+        raise EffectError(eff, f"a {kind} command's time isn't a number: {c!r:.80}")
+    for i, v in enumerate(args):
+        if i == p_at and v is None:
+            continue                          # "no pressure" is allowed
+        if not _finite(v):
+            raise EffectError(eff, f"a {kind} command has {v!r} where a number belongs")
+    if p_at is not None and args[p_at] is not None:
+        args[p_at] = max(0.0, min(1.0, float(args[p_at])))
+    if kind in ("moveto", "lineto"):
+        args[0], args[1] = clamp_xy(args[0], args[1], ctx)
+    elif kind == "pendown":
+        args[1], args[2] = clamp_xy(args[1], args[2], ctx)
+    fixed = (c[0], kind, *args)
+    return c if fixed == c else fixed
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -355,32 +516,12 @@ class PressureHatch(Effect):
         {"attr": "SPACING_MM",    "label": "spacing (mm)",    "min": 0.0, "max": 10.0, "step": 0.5},
     ]
 
-    def reset(self):
-        self._pts: list = []   # (x, y, pressure) for the stroke in progress
-
-    def on_moveto(self, cmd, ctx):
-        self._pts = []
-        return [cmd]
-
-    def on_pendown(self, cmd, ctx):
-        x, y = xy_of(cmd)
-        self._pts.append((x, y, pressure_of(cmd)))
-        return [cmd]
-
-    def on_lineto(self, cmd, ctx):
-        x, y = xy_of(cmd)
-        self._pts.append((x, y, pressure_of(cmd)))
-        return [cmd]
-
-    def on_penup(self, cmd, ctx):
-        pts = self._pts
-        self._pts = []
+    def after_stroke(self, pts, t, ctx):
         if len(pts) < 2:
-            return [cmd]
+            return []
 
-        t = time_of(cmd)
         spacing = self.SPACING_MM / MM_PER_IN
-        out  = [cmd]      # lift off the stroke before going back over it
+        out  = []
         prev = None       # last point that got a hatch
 
         for i, (x, y, p) in enumerate(pts):
@@ -393,14 +534,8 @@ class PressureHatch(Effect):
                 continue
             nx, ny = normal
             half = self._length_in(p) / 2.0
-            ax, ay = clamp_xy(x - nx * half, y - ny * half, ctx)
-            bx, by = clamp_xy(x + nx * half, y + ny * half, ctx)
-            out += [
-                moveto(t, ax, ay),
-                pendown(t, p, ax, ay),
-                lineto(t, bx, by, p),
-                penup(t),
-            ]
+            out += draw_path(t, [(x - nx * half, y - ny * half), (x + nx * half, y + ny * half)],
+                             ctx, pressure=p)
             prev = (x, y)
 
         return out
@@ -475,39 +610,17 @@ class StrokeConnector(Effect):
 
     def reset(self):
         self._midpoints: list = []   # midpoint of every completed stroke, in order
-        self._stroke:    list = []   # inked positions of the stroke in progress
 
-    def on_moveto(self, cmd, ctx):
-        self._stroke = []
-        return [cmd]
-
-    def on_pendown(self, cmd, ctx):
-        self._stroke.append(xy_of(cmd))
-        return [cmd]
-
-    def on_lineto(self, cmd, ctx):
-        self._stroke.append(xy_of(cmd))
-        return [cmd]
-
-    def on_penup(self, cmd, ctx):
-        if not self._stroke:
-            return [cmd]
-
-        mid = self._midpoint(self._stroke)
-        self._stroke = []
+    def after_stroke(self, points, t, ctx):
+        mid = self._midpoint(points)
 
         # Pick from the strokes that came before, then record this one — so a
         # stroke is never connected to itself.
         target = self._pick_target(mid)
         self._midpoints.append(mid)
         if target is None:
-            return [cmd]
-
-        t = time_of(cmd)
-        return [
-            cmd,                                        # lift off the finished stroke
-            *self._connector(t, mid, target, ctx),
-        ]
+            return []
+        return self._connector(t, mid, target, ctx)
 
     def _connector(self, t: float, start: tuple, end: tuple, ctx: Ctx) -> list:
         """
@@ -528,12 +641,7 @@ class StrokeConnector(Effect):
             *self._circle_pts(start, theta, ctx),
             *self._circle_pts(end, theta + math.pi, ctx),
         ]
-        return [
-            moveto(t, *pts[0]),
-            pendown(t, self.LINE_PRESSURE, *pts[0]),
-            *[lineto(t, x, y, self.LINE_PRESSURE) for x, y in pts[1:]],
-            penup(t),
-        ]
+        return draw_path(t, pts, ctx, pressure=self.LINE_PRESSURE)
 
     def _circle_pts(self, center: tuple, start_angle: float, ctx: Ctx) -> list:
         """
@@ -556,7 +664,8 @@ class StrokeConnector(Effect):
         spaces points roughly evenly, so the middle sample sits near the true
         halfway point along the stroke.
         """
-        return stroke[len(stroke) // 2]
+        x, y, _ = stroke[len(stroke) // 2]
+        return (x, y)
 
     def _pick_target(self, mid: tuple) -> tuple | None:
         if not self._midpoints:
@@ -603,45 +712,20 @@ class Mirror(Effect):
         {"attr": "MIRROR_THRESH", "label": "max len (× width)", "min": 0.0, "max": 2.0, "step": 0.05},
     ]
 
-    def reset(self):
-        self._pts: list = []   # (x, y, pressure) of the stroke in progress
-
-    def on_moveto(self, cmd, ctx):
-        self._pts = []
-        return [cmd]
-
-    def on_pendown(self, cmd, ctx):
-        self._pts.append((*xy_of(cmd), pressure_of(cmd)))
-        return [cmd]
-
-    def on_lineto(self, cmd, ctx):
-        self._pts.append((*xy_of(cmd), pressure_of(cmd)))
-        return [cmd]
-
-    def on_penup(self, cmd, ctx):
-        pts = self._pts
-        self._pts = []
+    def after_stroke(self, pts, t, ctx):
         if len(pts) < 2:
-            return [cmd]
+            return []
 
         length = sum(math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
                      for i in range(1, len(pts)))
         max_len = self.MIRROR_THRESH * ctx.y_max        # fraction of page width → inches
         if length > max_len or self.rng.random() >= self.MIRROR_CHANCE:
-            return [cmd]
+            return []
 
         # Reflect every point about the stroke's horizontal (y) centre line.
         ys = [p[1] for p in pts]
         axis = (min(ys) + max(ys)) / 2.0
-        t = time_of(cmd)
-
-        x0, y0 = clamp_xy(pts[0][0], 2.0 * axis - pts[0][1], ctx)
-        out = [cmd, moveto(t, x0, y0), pendown(t, pts[0][2], x0, y0)]
-        for x, y, p in pts[1:]:
-            mx, my = clamp_xy(x, 2.0 * axis - y, ctx)
-            out.append(lineto(t, mx, my, p))
-        out.append(penup(t))
-        return out
+        return draw_path(t, [(x, 2.0 * axis - y, p) for x, y, p in pts], ctx)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -649,7 +733,8 @@ class Mirror(Effect):
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # Keys here are the names listen_to_idraw's EFFECT_* switches map to.
-# Add a new effect by writing the class above and listing it here.
+# Add a new effect by writing the class above and listing it here. Effects
+# written in the app (PantographApp/custom_effects.py) are added at startup.
 
 REGISTRY: dict = {
     Zigzag.name:          Zigzag,
@@ -710,5 +795,6 @@ def effect_specs() -> list:
             "blurb":   " ".join((getattr(cls, "blurb", "") or "").split()),
             "enabled": getattr(cls, "default_on", False),
             "params":  knobs,
+            "custom":  cls.source_file is not None,
         })
     return specs

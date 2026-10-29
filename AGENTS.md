@@ -116,7 +116,10 @@ the order `/r /g /b /a`, tool flags, `/canvasWidth`, `/canvasHeight`,
 `/drawingWidth`, `/eraserWidth`) before every new stroke. Since 2026-09-18 that
 block is the stroke boundary. This is taken from Marc's `--raw-osc` captures
 and his testing; rapid taps can produce several blocks in a row with no points
-between them. See README § Stroke boundaries.
+between them. Because nothing marks the *last* stroke's end, 1s of quiet
+also ends a stroke (since 2026-10-28), or effects that draw at a stroke's end
+waited for the next stroke, or plotted onto a fresh sheet after New drawing.
+See README § Stroke boundaries.
 
 **History:** boundaries used to be inferred from a time gap
 (`PEN_UP_TIMEOUT_SEC`, 0.15s). That had a known failure mode: dragging the

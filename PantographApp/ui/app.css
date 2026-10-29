@@ -375,6 +375,32 @@ details.more[open] > summary { margin-bottom: var(--s3); }
 .fx { display: grid; gap: var(--s2); padding-bottom: var(--s3); border-bottom: 1px solid var(--line); }
 .fx:last-child { border-bottom: 0; }
 .fx .check { font-weight: 600; }
+.fx .tag { font-size: 11px; font-weight: 500; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
+
+/* the New effect window */
+textarea {
+  font: 13px/1.45 var(--font); color: inherit; width: 100%; resize: vertical;
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s2);
+}
+textarea[readonly] { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.window-card.wide { width: min(680px, 100%); max-height: min(90vh, 900px); }
+.step {
+  display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--ink); color: #fff; font-size: 11px; letter-spacing: 0; margin-right: 2px;
+}
+.code-warning {
+  display: grid; gap: var(--s2); padding: var(--s3); border-radius: var(--radius); font-size: 13px;
+  background: color-mix(in srgb, var(--warn) 10%, var(--paper));
+  border: 1px solid color-mix(in srgb, var(--warn) 55%, var(--paper));
+}
+.code-warning p { margin: 0; }
+.risky { font-size: 12px; font-weight: 600; color: var(--warn); }
+.code-warning-title { color: var(--bad); }
+/* What Check and add came to: one line, and its button on the line below. */
+.fx-outcome { display: grid; gap: var(--s2); }
+.fx-outcome p { margin: 0; font-weight: 600; }
+.fx-fail { color: var(--bad); }
+.fx-ok { color: var(--ok); }
 
 .tool { display: grid; gap: var(--s2); padding: var(--s3); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); }
 .tool h4 { margin: 0; font-size: 14px; }

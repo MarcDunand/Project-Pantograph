@@ -144,7 +144,8 @@ moving along with you.
   and Disengage XY Motors; the AxiDraw model and paper size; and the three pen
   positions, each with a Test button. **Effects**: postprocessing effects like
   zigzag or hatching, each with an **i** button that explains it (see
-  [Post-processing effects](#post-processing-effects)).
+  [Post-processing effects](#post-processing-effects)). **Add new effect…**
+  makes your own, with your own AI (see [Your own effects](#your-own-effects)).
 - **Preferences → Plotter preferences…**: speed and acceleration, pressure
   updates, table tilt, and how hard to simplify lines when the plotter falls
   behind.
@@ -387,13 +388,13 @@ everything you need.)*
 |------|------------|
 | `listen_to_idraw.py` | Main entry point. OSC receiver, coordinate mapping, plot queue, plotter thread, adaptive optimizer, SVG replay. |
 | `preview.py` | The one local server (127.0.0.1:5810, or the next free port to 5830): serves the page from `PantographApp/ui/` and the live feed on `/ws`. |
-| `postprocess.py` | Post-processing effects — transforms over the plot command stream. Add new effects here. |
+| `postprocess.py` | Post-processing effects — transforms over the plot command stream, and the guards every effect runs behind. Add new built-in effects here. |
 | `layout.py` | Where the drawing and the machine sit on the paper, and the one path from a tablet point to the machine. |
 | `svg_transform.py` | Flip / minimum-width transforms on a saved SVG, from the command line. Running it with a file opens that file in Pantograph. |
 | `dot_healer.py` | Offline CLI: rejoin strokes that a fast pen tore into a trail of dots. |
 | `saved_drawings/` | Example drawings, kept for documentation and as test data. The app saves to `Documents/Pantograph/` instead. |
 | `recording.py` | The drawing-recording format: records the live session, reads and writes plot SVGs. |
-| `PantographApp/` | App-specific code: the page (`ui/`), settings, data folders, the system file windows, startup/shutdown, the Windows launcher (`Pantograph.bat`), the vendored AxiDraw API (`vendor/`), and the build guide. |
+| `PantographApp/` | App-specific code: the page (`ui/`), effects written in the app (`custom_effects.py`, `effect_prompt.txt`), settings, data folders, the system file windows, startup/shutdown, the Windows launcher (`Pantograph.bat`), the vendored AxiDraw API (`vendor/`), and the build guide. |
 | `install-windows.ps1` | The one-line installer: downloads the latest release into `%LOCALAPPDATA%\Pantograph\app` and makes the shortcuts. |
 | `.github/workflows/` | CI on every push (`ci.yml`) and the release build on a `v*` tag (`release.yml`). |
 | `tests/` | `uv run pytest`: the recording format, stroke handling, and the whole app end to end. |
@@ -433,8 +434,8 @@ iDraw OSC sends no pen-up/pen-down messages, but it does send a **state
 block** (`/r /g /b /a`, the tool flags, `/canvasWidth`, `/canvasHeight`,
 `/drawingWidth`, `/eraserWidth`) before every new stroke. That block, not
 timing, is what ends one stroke and starts the next. Any point that arrives
-while a stroke is open belongs to it, however long the pause before it, so a
-fast stroke can no longer tear into dots.
+while a stroke is open belongs to it, so a fast stroke can no longer tear into
+dots.
 
 Timing only *rests* the pen. After `PEN_REST_SEC` (0.15s) with no new point, a
 watchdog thread lifts the pen so it doesn't sit on the paper bleeding ink, but
@@ -442,10 +443,15 @@ the stroke stays open. If the stroke carries on, the lift is taken back out of
 the queue when the plotter hasn't reached it yet (the usual case, since the
 plotter runs behind), or the pen goes back down where it left off.
 
-Because iDraw sends nothing when the Pencil lifts, the *latest* stroke stays
-open until the next one begins. Its pen is already off the paper, but the
-effects that act at a stroke's end (zigzag's last corner, pressure hatch,
-stroke connector) run when the next stroke starts. A stroke with no movement
+Because iDraw sends nothing when the Pencil lifts, the *latest* stroke would
+stay open until the next one began, and the effects that act at a stroke's end
+(zigzag's last corner, pressure hatch, stroke connector, your own) would wait
+with it, then plot on whatever paper is in the machine by then. So after
+`STROKE_END_SEC` (1s) with no new point the stroke is ended for real; that's
+far above the gaps that tore fast strokes. A point after it, with no state
+block between, starts a new stroke. Imports keep the recording's boundaries.
+**New drawing** also resets the effects, so stroke connector doesn't reach
+back to strokes on the old sheet. A stroke with no movement
 in it is plotted as a dot (`dot_dwell`). OSC is received on a single thread, so
 messages are handled in the order they arrive, which this relies on.
 
@@ -579,12 +585,68 @@ shows the drawing as it was actually drawn — only the pen is affected.
 | `mirror` | Now and then doubles a short stroke with a left–right mirrored copy of itself. |
 
 To write one: subclass `Effect`, override only the `on_<kind>` hooks you care
-about, list tunable class attributes in `PARAMS`, and register it in `REGISTRY`.
-The Effects tab and the `_EFFECT_SWITCHES` block pick it up from there. Full
-guide in the `postprocess.py` module docstring.
+about — or `after_stroke()`, for marks added once a stroke is finished — list
+tunable class attributes in `PARAMS`, and register it in `REGISTRY`. The
+Effects tab and the `_EFFECT_SWITCHES` block pick it up from there. Full guide
+in the `postprocess.py` module docstring.
+
+The engine doesn't trust what an effect returns. Every command an effect makes
+is checked and clamped onto the paper (`run_effect`), and an effect that
+raises, returns nonsense, makes more than 20,000 commands from one point, or
+takes over a second on one is switched off with a message on the page, while
+the drawing carries on plotting.
 
 Effects are applied in registry order but are not designed against each other —
 turn on one at a time.
+
+### Your own effects
+
+**Effects → Add new effect…** makes an effect without writing code:
+
+1. **Describe it** in your own words.
+2. **Ask your AI.** Pantograph turns the description into a prompt (no AI
+   runs inside Pantograph). The prompt carries everything an AI needs: the
+   effect API, read from `postprocess.py` itself so it can't go out of date,
+   three of the built-in effects as examples, what a pen plotter can and can't
+   do, and the exact shape of the answer. Copy it into any AI chat (ChatGPT,
+   Claude, Gemini: the free versions work), then copy the whole reply. The
+   prompt asks the AI to begin and end the code with a
+   `# --- PANTOGRAPH EFFECT START ---` / `END ---` line; those are comments, so
+   they survive however the reply is copied, and Pantograph cuts the code out
+   between them.
+3. **Paste the reply.** Pantograph takes the code out of it and checks it: one
+   `Effect` subclass, imports from a short list only. It then runs the code on
+   made-up strokes in a separate Python process, with every setting at its
+   default, its lowest and its highest, and kills that process after 10 s if it
+   hangs. If something fails, the page says "Code didn't compile" (the reason
+   is in its tooltip), and **Copy a prompt to fix it** hands the error back to
+   the AI in words it can act on.
+
+A new effect is switched on, with the others off, so you see it on its own.
+**Revise…** asks the AI for a change: the prompt includes the effect's current
+code. **Remove** moves its file aside. If an effect gets switched off
+mid-drawing, Revise starts with the message that switched it off. An effect
+that gets stuck in an endless loop while drawing can't be stopped, so plotting
+stops: after 5 s the page says so, the effect is saved as off, and closing and
+reopening Pantograph carries on without it.
+
+Each effect is a file in `Documents/Pantograph/effects/`, named after the
+effect. That folder is outside the app folder, so updating Pantograph keeps
+your effects. Removed ones go to `effects/removed/`. At startup Pantograph only
+loads files it saved itself: it keeps each one's SHA-256 in
+`trusted_effects.json` in its config folder (not in Documents). A file put
+there any other way (sent by someone, synced from another computer, edited
+since) is reported and not run. To share an effect, share its code, and the
+other person pastes it into Add new effect…, past the warning.
+
+**Pasted code runs on your computer**, with the same access Pantograph has,
+and the page says so above the paste box. The checks catch an AI's mistakes,
+not malice; they aren't a sandbox. Only paste code from an AI you asked
+yourself, or from someone you trust.
+
+The prompt's wording lives in `PantographApp/effect_prompt.txt`;
+`PantographApp/custom_effects.py` builds it, and does the checking, testing,
+saving and loading.
 
 ---
 

@@ -1,0 +1,103 @@
+This file is the prompt Pantograph builds when someone adds or revises an
+effect (PantographApp/custom_effects.py: prompt()). Each "=== NAME ===" line
+starts a section. MAIN is the prompt itself; {{TASK}} in it is replaced by the
+NEW, REVISE or FIX section. Everything above the first section is ignored.
+
+=== MAIN ===
+You are writing a plug-in for Pantograph, a program that makes an AxiDraw pen plotter copy what an artist draws on an iPad, live, stroke by stroke. A plug-in is called an "effect": it changes what the pen plots as the drawing comes in. The person who sent you this doesn't write code. They will paste your reply back into Pantograph, which takes the code out of it, tests it and adds it to the app.
+
+{{TASK}}
+
+# What a pen plotter can and can't do
+
+Pantograph only plots what is physically possible with one pen on paper, so an effect has to work within these limits:
+
+- There is one pen, with one colour and one line width. An effect can't change colour, line width or pen, and it can't fill areas except by drawing lines (hatching).
+- Ink can't be erased. An effect can never remove or move a mark that has already been plotted.
+- Effects run live, one command at a time, as the stroke arrives. An effect can change the stroke in progress (reshape it, drop points, hold points back until the stroke ends), and it can add marks of its own, usually right after a stroke ends (see after_stroke). It can remember every earlier stroke, but it can't know about future strokes.
+- The effect doesn't know the iPad's brush, colour or line width, only positions and pressure.
+- Positions are in inches on the machine, measured from its home corner: x along its long axis, from 0 to ctx.x_max; y along its short axis, from 0 to ctx.y_max (about 11.8 × 8.6 for a standard AxiDraw). Pantograph clamps everything to that area. The drawing can be placed and turned on the paper freely, so don't rely on which way is "up" or "left". In the usual layout, the drawing's left–right runs along y and its top–bottom along x.
+- Incoming points are about 0.25 mm (0.01 in) apart. Don't make segments much shorter than that: the plotter can't draw them any better.
+- Pressure is 0 to 1 (0.5 when the iPad sends none). It changes the pen's height only if the person has switched on "vary with pencil pressure"; otherwise it is just data the effect can use.
+- The plotter is slower than a hand. Every pen lift costs a moment, and long extra lines take time. Keep what the effect adds in proportion to the stroke, or the plotter falls far behind the artist.
+- Effects must be quick: Pantograph waits on every call, and switches off an effect that takes more than a second for one point.
+
+If what was asked for can't be done on a pen plotter, write the closest thing that can, and say so plainly in the blurb.
+
+# Rules for the code
+
+Reply with one complete Python file, in a single ```python code block. Inside the block, the first line must be exactly `{{START}}` and the last line exactly `{{END}}`: Pantograph looks for these two lines to find where the code starts and stops, so never leave them out. After the block, write at most two sentences on what you chose. Don't ask questions: make reasonable choices, and turn uncertain choices into settings.
+
+- Import only from these modules: {{ALLOWED}}. Usually that's `import math` and `from postprocess import Effect, draw_path, ...` (whatever you use).
+- Define exactly one subclass of Effect. Helper functions and constants at the top level are fine; nothing at the top level should do any work when the file loads.
+- Give the class:
+  - `name`: short, lowercase_with_underscores.
+  - `label`: two to four lowercase words, shown in the effects list.
+  - `blurb`: two or three plain sentences for an artist who doesn't code: what it does to the drawing, and what each setting changes. No jargon, no code words.
+  - `default_on = False`.
+- Settings: make every number someone might want to tune an UPPER_CASE class attribute, and list it in PARAMS (at most five), with a `label`, `min`, `max` and `step`, plus `"int": True` for whole numbers. Lengths in millimetres, with "(mm)" in the label, converted with MM_PER_IN. The default must lie between min and max, and every value from min to max must work: nothing may divide by zero or loop forever at either end.
+- Every hook returns a list of commands, even if it's just `[cmd]`. Build commands with the constructors (moveto, pendown, lineto, penup, dot_dwell, draw_path); never build tuples by hand.
+- Keep any state on self, and set it up in reset(). self.stroke holds the points of the stroke in progress.
+- For randomness use self.rng only (never the `random` module's own functions), so a drawing plots the same way every time.
+- Don't change ctx. Don't touch files, the network, threads, the clock or the screen, and don't sleep or print.
+
+# The effect API
+
+This is the part of Pantograph's postprocess.py that effects are written against, copied from the source:
+
+```python
+{{API}}
+```
+
+# Examples
+
+Three of Pantograph's own effects. Mirror and PressureHatch add marks after each stroke, using after_stroke. Zigzag reshapes the stroke in progress, using the per-command hooks.
+
+```python
+{{EXAMPLES}}
+```
+
+=== NEW ===
+# Your task
+
+Write a new effect that does what the person describes below. Their words:
+
+"""
+{{DESCRIPTION}}
+"""
+
+=== REVISE ===
+# Your task
+
+Change the effect below as the person asks. Keep its `name` unchanged, and keep the parts they didn't ask to change. What they want changed, in their words:
+
+"""
+{{DESCRIPTION}}
+"""
+
+The effect as it is now:
+
+```python
+{{CODE}}
+```
+
+=== FIX ===
+# Your task
+
+Pantograph refused the effect below. Fix it, keeping everything that wasn't broken. Pantograph's message:
+
+"""
+{{ERROR}}
+"""
+
+What the person asked for, in their words:
+
+"""
+{{DESCRIPTION}}
+"""
+
+The code that was refused:
+
+```python
+{{CODE}}
+```
