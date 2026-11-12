@@ -144,7 +144,7 @@ NO_PRESSURE_VALUE: float = 0.5
 #
 # Effects are not designed against each other; turn on one at a time.
 
-EFFECT_ZIGZAG           = True   # pen moves fully in x, then fully in y — lines come out as zigzag steps
+EFFECT_ZIGZAG           = False   # pen moves fully in x, then fully in y — lines come out as zigzag steps
 EFFECT_PRESSURE_HATCH   = False   # hard-pressed parts of a stroke grow perpendicular hatch marks
 EFFECT_STROKE_CONNECTOR = False    # after each stroke, draw a line from its midpoint to a nearby stroke's
 EFFECT_MIRROR           = False    # short strokes sometimes get a vertically mirrored copy over themselves
