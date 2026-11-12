@@ -1,5 +1,18 @@
 # Project Pantograph
 
+**Contents:**
+[Get started](#get-started) ·
+[Using Pantograph](#using-pantograph) ·
+[Troubleshooting](#troubleshooting) ·
+[Running from source](#running-from-source) ·
+[Files](#files) ·
+[Pipeline](#pipeline) ·
+[The page](#the-page-1270015810) ·
+[Post-processing effects](#post-processing-effects) ·
+[Recording and replay](#recording-and-replay) ·
+[Offline tools](#offline-tools) ·
+[License](#license)
+
 An artist draws on an iPad with an Apple Pencil; an AxiDraw pen plotter
 recreates the drawing on paper, live, while they draw. The Pantograph app
 shows what is happening and exposes every knob that matters.
@@ -23,37 +36,6 @@ drawing is saved as an SVG you can plot later on a machine that has one.
 **So is the iPad.** With only an AxiDraw you can plot a drawing that was saved
 from Pantograph, your own or one someone sent you. (It can't plot SVGs made by
 other programs: see [Using Pantograph](#using-pantograph).)
-
-## Contents
-
-- [Get started](#get-started)
-  - [1. Install Pantograph](#1-install-pantograph)
-  - [2. Get iDraw OSC on the iPad](#2-get-idraw-osc-on-the-ipad)
-  - [3. Connect the iPad](#3-connect-the-ipad)
-  - [4. Plug in the AxiDraw (optional)](#4-plug-in-the-axidraw-optional)
-  - [5. Draw](#5-draw)
-- [Using Pantograph](#using-pantograph)
-- [Troubleshooting](#troubleshooting)
-  - [Nothing arrives from the iPad](#nothing-arrives-from-the-ipad)
-  - [The install doesn't work](#the-install-doesnt-work)
-  - [The plotter doesn't connect](#the-plotter-doesnt-connect)
-  - [Asking for help](#asking-for-help)
-- [Running from source](#running-from-source)
-  - [Developers](#developers)
-- [Files](#files)
-- [Pipeline](#pipeline)
-  - [Coordinates](#coordinates)
-  - [Stroke boundaries](#stroke-boundaries)
-  - [Plot command stream](#plot-command-stream)
-  - [Adaptive optimization](#adaptive-optimization)
-  - [Pressure](#pressure)
-  - [Tilt compensation](#tilt-compensation)
-- [The page (127.0.0.1:5810)](#the-page-1270015810)
-- [Post-processing effects](#post-processing-effects)
-  - [Your own effects](#your-own-effects)
-- [Recording and replay](#recording-and-replay)
-- [Offline tools](#offline-tools)
-- [License](#license)
 
 ---
 
